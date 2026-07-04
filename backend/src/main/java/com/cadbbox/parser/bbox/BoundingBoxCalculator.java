@@ -21,6 +21,10 @@ import java.util.Map;
 @Component
 public class BoundingBoxCalculator {
 
+    /** Cache: product id → its local-frame AABB (geometry is shared across instances). */
+    private final Map<Integer, BoundingBox> productBboxCache = new HashMap<>();
+    private ParsedStepFile cachedFile;
+
     /**
      * Compute the AABB of a single part given its shape representation entity,
      * with no transform (Slice 1 path — used by the single-part golden sample).
@@ -36,56 +40,107 @@ public class BoundingBoxCalculator {
 
     /**
      * Compute a leaf part's AABB in root coordinates, applying the given
-     * accumulated transform to every geometry point.
+     * accumulated transform to every geometry point. The part's local-frame
+     * bbox is cached per product id (geometry is shared across instances of the
+     * same product), so repeated instances don't re-walk the entity graph.
+     *
+     * <p>The shape representation is resolved from the part's
+     * {@code PRODUCT_DEFINITION} via {@code PRODUCT_DEFINITION_SHAPE.definition}
+     * → {@code SHAPE_DEFINITION_REPRESENTATION}, which is robust to Creo's
+     * non-standard formation chain.
      */
     public BoundingBox computeForLeaf(ParsedStepFile file, AssemblyNode leaf) {
-        StepEntity shapeRep = findShapeRepresentationForProduct(file, leaf.productId());
-        if (shapeRep == null) return null; // leaf has no geometry (rare)
-        return accumulate(shapeRep.id(), file.entities(), leaf.rootTransform());
+        // Cache invalidation when the file changes.
+        if (cachedFile != file) { productBboxCache.clear(); cachedFile = file; }
+        int productId = leaf.productId();
+        if (productId < 0) return null;
+        BoundingBox local = productBboxCache.get(productId);
+        if (local == null) {
+            if (productBboxCache.containsKey(productId)) return null; // known "no geometry"
+            StepEntity shapeRep = findShapeRepresentationForProduct(file, productId);
+            if (shapeRep == null) {
+                productBboxCache.put(productId, null);
+                return null;
+            }
+            try {
+                local = accumulate(shapeRep.id(), file.entities(), Transform4.IDENTITY);
+            } catch (IllegalStateException e) {
+                productBboxCache.put(productId, null);
+                return null;
+            }
+            productBboxCache.put(productId, local);
+        }
+        if (local == null) return null;
+        // Transform the local-frame AABB's 8 corners into root coordinates and
+        // re-bind. (Cheaper than re-walking geometry per instance.)
+        Transform4 t = leaf.rootTransform();
+        double mnX = Double.POSITIVE_INFINITY, mnY = Double.POSITIVE_INFINITY, mnZ = Double.POSITIVE_INFINITY;
+        double mxX = Double.NEGATIVE_INFINITY, mxY = Double.NEGATIVE_INFINITY, mxZ = Double.NEGATIVE_INFINITY;
+        for (int dz = 0; dz < 2; dz++) for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
+            double x = dx == 0 ? local.minX() : local.maxX();
+            double y = dy == 0 ? local.minY() : local.maxY();
+            double z = dz == 0 ? local.minZ() : local.maxZ();
+            double[] p = t.apply(x, y, z);
+            mnX = Math.min(mnX, p[0]); mnY = Math.min(mnY, p[1]); mnZ = Math.min(mnZ, p[2]);
+            mxX = Math.max(mxX, p[0]); mxY = Math.max(mxY, p[1]); mxZ = Math.max(mxZ, p[2]);
+        }
+        return new BoundingBox(mnX, mnY, mnZ, mxX, mxY, mxZ);
     }
 
-    /** Find the SHAPE_DEFINITION_REPRESENTATION rep for a PRODUCT id. */
+    /**
+     * Find the SHAPE_DEFINITION_REPRESENTATION rep for a PRODUCT id, robust to
+     * Creo's non-standard formation chain.
+     *
+     * <p>Walk: collect every PRODUCT_DEFINITION_SHAPE whose {@code .definition}
+     * ref points at a PRODUCT_DEFINITION whose formation → this PRODUCT. Then
+     * find the SHAPE_DEFINITION_REPRESENTATION referencing that PDS. Falls back
+     * to a direct scan: any ADVANCED_*_SHAPE_REPRESENTATION whose items include
+     * a brep whose product matches — but the PDS path covers the common case.
+     */
     private StepEntity findShapeRepresentationForProduct(ParsedStepFile file, int productId) {
         if (productId < 0) return null;
         Map<Integer, StepEntity> ents = file.entities();
-        // PRODUCT_DEFINITION_SHAPE 'name','desc',#definition → definition is a PD whose formation → PRODUCT
-        // Simpler approach: SHAPE_DEFINITION_REPRESENTATION links (#PRODUCT_DEFINITION_SHAPE, #rep).
-        // PRODUCT_DEFINITION_SHAPE's 3rd ref points at the PRODUCT_DEFINITION.
-        // Walk: find PDS whose .definition PD has formation→PRODUCT == productId.
-        // To keep it cheap, precompute a map product -> rep on demand.
+
+        // Build PD -> PRODUCT map (try both formation types; tolerate Creo's
+        // broken chain by also accepting PRODUCT_DEFINITION_FORMATION*).
+        Map<Integer, Integer> pdfToProduct = new HashMap<>();
+        for (StepEntity e : ents.values()) {
+            String t = e.type();
+            if (t.equals("PRODUCT_DEFINITION_FORMATION")
+                    || t.equals("PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE")) {
+                StepEntity.Ref prodRef = e.refAt(2);
+                if (prodRef != null) pdfToProduct.put(e.id(), prodRef.id());
+            }
+        }
         Map<Integer, Integer> pdToProduct = new HashMap<>();
         for (StepEntity e : ents.values()) {
-            if (e.type().equals("PRODUCT_DEFINITION_FORMATION")
-                    || e.type().equals("PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE")) {
-                StepEntity.Ref prodRef = e.refAt(2);
-                if (prodRef != null) pdToProduct.put(e.id(), prodRef.id());
-            }
-        }
-        Map<Integer, Integer> pdToProd = new HashMap<>();
-        for (StepEntity e : ents.values()) {
             if (e.type().equals("PRODUCT_DEFINITION")) {
-                StepEntity.Ref f = e.refAt(2);
-                if (f != null && pdToProduct.containsKey(f.id())) {
-                    pdToProd.put(e.id(), pdToProduct.get(f.id()));
+                // args = (id, description, #formation_or_context, #frame_of_reference)
+                // formation is normally arg 2; Creo may put a context there. Try all refs.
+                for (Object a : e.args()) {
+                    if (a instanceof StepEntity.Ref r) {
+                        Integer prod = pdfToProduct.get(r.id());
+                        if (prod != null) { pdToProduct.put(e.id(), prod); break; }
+                    }
                 }
             }
         }
+        // PDS 'name','desc',#definition(=PD) → find PDS whose PD maps to our product.
+        int targetProduct = productId;
         for (StepEntity e : ents.values()) {
-            if (e.type().equals("PRODUCT_DEFINITION_SHAPE")) {
-                StepEntity.Ref defRef = null;
-                for (Object a : e.args()) {
-                    if (a instanceof StepEntity.Ref r) defRef = r;
-                }
-                if (defRef != null && pdToProd.get(defRef.id()) != null
-                        && pdToProd.get(defRef.id()) == productId) {
-                    // Find SHAPE_DEFINITION_REPRESENTATION referencing this PDS.
-                    for (StepEntity sdr : ents.values()) {
-                        if (sdr.type().equals("SHAPE_DEFINITION_REPRESENTATION") && sdr.args().size() >= 2
-                                && sdr.args().get(0) instanceof StepEntity.Ref r && r.id() == e.id()
-                                && sdr.args().get(1) instanceof StepEntity.Ref repRef) {
-                            return ents.get(repRef.id());
-                        }
-                    }
+            if (!e.type().equals("PRODUCT_DEFINITION_SHAPE")) continue;
+            StepEntity.Ref defRef = null;
+            for (Object a : e.args()) if (a instanceof StepEntity.Ref r) defRef = r;
+            if (defRef == null) continue;
+            Integer prod = pdToProduct.get(defRef.id());
+            if (prod == null || prod != targetProduct) continue;
+            // Find SHAPE_DEFINITION_REPRESENTATION referencing this PDS as arg 0.
+            for (StepEntity sdr : ents.values()) {
+                if (sdr.type().equals("SHAPE_DEFINITION_REPRESENTATION") && sdr.args().size() >= 2
+                        && sdr.args().get(0) instanceof StepEntity.Ref r && r.id() == e.id()
+                        && sdr.args().get(1) instanceof StepEntity.Ref repRef) {
+                    StepEntity rep = ents.get(repRef.id());
+                    if (rep != null) return rep;
                 }
             }
         }

@@ -1,11 +1,11 @@
 package com.cadbbox.parser.tree;
 
+import java.util.*;
+
 import com.cadbbox.parser.step.StepEntity;
 import com.cadbbox.parser.step.StepNameCodec;
 import com.cadbbox.parser.step.StepParser.ParsedStepFile;
 import org.springframework.stereotype.Component;
-
-import java.util.*;
 
 /**
  * Builds the assembly tree from parsed STEP entities.
@@ -95,12 +95,42 @@ public class AssemblyTreeBuilder {
                 }
             }
         }
+        // When multiple roots exist, Creo/AP214 files often have a fragmented
+        // NAUO topology where the true top-level host isn't reachable as a single
+        // root (it's linked via CONTEXT_DEPENDENT_SHAPE_REPRESENTATION, which we
+        // don't parse). Rather than pick one arbitrary small subtree, wrap ALL
+        // roots under a synthetic "MODEL" node so the user sees everything. Rank
+        // by subtree size so the biggest assemblies come first.
+        if (rootPds.size() > 1) {
+            rootPds.sort((a, b) -> distinctDescendantCount(b, edges) - distinctDescendantCount(a, edges));
+        }
         List<AssemblyNode> roots = new ArrayList<>();
         for (int rootPd : rootPds) {
-            AssemblyNode root = buildSubtree(rootPd, Transform4.IDENTITY, null, edges, pdToProduct, entityMap, new HashSet<>());
-            roots.add(root);
+            roots.add(buildSubtree(rootPd, Transform4.IDENTITY, null, edges, pdToProduct, entityMap, new HashSet<>()));
+        }
+        // If there are many roots, wrap them under one synthetic root for a
+        // single, navigable tree. Keep up to 200 to stay usable.
+        if (roots.size() > 1) {
+            List<AssemblyNode> capped = roots.size() > 200 ? roots.subList(0, 200) : roots;
+            AssemblyNode synthetic = new AssemblyNode(
+                    -1, "MODEL (" + roots.size() + " sub-assemblies)", "", true,
+                    Transform4.IDENTITY, Transform4.IDENTITY, new ArrayList<>(capped));
+            return List.of(synthetic);
         }
         return roots;
+    }
+
+    /** Count distinct descendant PDs reachable below this PD (root-quality signal). */
+    private int distinctDescendantCount(int pdId, List<Nauo> edges) {
+        Set<Integer> seen = new HashSet<>();
+        Deque<Integer> stack = new ArrayDeque<>();
+        for (Nauo n : edges) if (n.parentPd == pdId) stack.push(n.childPd);
+        while (!stack.isEmpty()) {
+            int cur = stack.pop();
+            if (!seen.add(cur)) continue;
+            for (Nauo n : edges) if (n.parentPd == cur) stack.push(n.childPd);
+        }
+        return seen.size();
     }
 
     private AssemblyNode buildSubtree(int pdId, Transform4 parentRoot, String instanceName,
