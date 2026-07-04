@@ -36,6 +36,29 @@ export const api = {
     return { metadata, root };
   },
 
+  async renameNode(modelId: string, nodeId: string, newName: string): Promise<void> {
+    await http.patch(`/models/${modelId}/nodes/${nodeId}/rename`, { name: newName });
+  },
+
+  async getBBox(modelId: string): Promise<unknown[]> {
+    const { data } = await http.get<unknown[]>(`/models/${modelId}/bbox`);
+    return data;
+  },
+
+  async createMergeGroup(modelId: string, memberIds: string[], name?: string): Promise<string> {
+    const { data } = await http.post<{ id: string }>(`/models/${modelId}/merge-groups`, { memberIds, name });
+    return data.id;
+  },
+
+  async deleteMergeGroup(modelId: string, groupId: string): Promise<void> {
+    await http.delete(`/models/${modelId}/merge-groups/${groupId}`);
+  },
+
+  async exportStep(modelId: string): Promise<Blob> {
+    const { data } = await http.post(`/models/${modelId}/export/step`, null, { responseType: 'blob' });
+    return data;
+  },
+
   async delete(modelId: string): Promise<void> {
     await http.delete(`/models/${modelId}`);
   },

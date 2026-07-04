@@ -5,22 +5,31 @@ import com.cadbbox.parser.web.ModelService.BadFileException;
 import com.cadbbox.parser.web.ModelService.ModelNotFoundException;
 import com.cadbbox.parser.web.ModelService.StepParseException;
 import com.cadbbox.parser.web.dto.ModelMetadata;
+import com.cadbbox.parser.web.dto.PartBBox;
 import com.cadbbox.parser.web.dto.TreeNode;
+import com.cadbbox.parser.bbox.StepExporter;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.net.URI;
+import java.util.List;
+import java.util.Map;
 
 /** REST API for uploading and inspecting STEP models. */
 @RestController
@@ -28,9 +37,11 @@ import java.net.URI;
 public class ModelController {
 
     private final ModelService service;
+    private final StepExporter stepExporter;
 
-    public ModelController(ModelService service) {
+    public ModelController(ModelService service, StepExporter stepExporter) {
         this.service = service;
+        this.stepExporter = stepExporter;
     }
 
     @PostMapping("/upload")
@@ -55,11 +66,68 @@ public class ModelController {
         return ResponseEntity.noContent().build();
     }
 
+    // ---- Slice 6: rename ----
+    @PatchMapping("/{id}/nodes/{nodeId}/rename")
+    public ResponseEntity<Void> rename(@PathVariable String id, @PathVariable String nodeId,
+                                       @RequestBody Map<String, String> body) throws IOException {
+        service.renameNode(id, nodeId, body.get("name"));
+        return ResponseEntity.noContent().build();
+    }
+
+    // ---- Slice 7: bbox export (JSON) ----
+    @GetMapping("/{id}/bbox")
+    public List<PartBBox> bbox(@PathVariable String id) {
+        return service.bboxList(id);
+    }
+
+    // ---- Slice 8: merge groups ----
+    @PostMapping("/{id}/merge-groups")
+    public ResponseEntity<Map<String, String>> createMerge(@PathVariable String id,
+                                                           @RequestBody Map<String, Object> body) throws IOException {
+        @SuppressWarnings("unchecked")
+        List<String> members = (List<String>) body.get("memberIds");
+        String name = (String) body.get("name");
+        String gid = service.createMergeGroup(id, members, name);
+        return ResponseEntity.ok(Map.of("id", gid));
+    }
+
+    @DeleteMapping("/{id}/merge-groups/{groupId}")
+    public ResponseEntity<Void> deleteMerge(@PathVariable String id, @PathVariable String groupId) throws IOException {
+        service.deleteMergeGroup(id, groupId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/{id}/merge-groups/{groupId}/rename")
+    public ResponseEntity<Void> renameMerge(@PathVariable String id, @PathVariable String groupId,
+                                            @RequestBody Map<String, String> body) throws IOException {
+        service.renameMergeGroup(id, groupId, body.get("name"));
+        return ResponseEntity.noContent().build();
+    }
+
+    // ---- Slice 9: export STEP ----
+    @PostMapping("/{id}/export/step")
+    public ResponseEntity<byte[]> exportStep(@PathVariable String id) {
+        TreeNode tree = service.tree(id);
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        stepExporter.export(tree, baos);
+        byte[] bytes = baos.toByteArray();
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"skeleton.stp\"")
+                .contentType(MediaType.parseMediaType("application/step"))
+                .body(bytes);
+    }
+
     // ---- error mapping (RFC 9457 problem+json) ----
 
     @ExceptionHandler(BadFileException.class)
     public ResponseEntity<ProblemDetail> badFile(BadFileException e) {
         return problem(HttpStatus.BAD_REQUEST, "bad-file", e.getMessage());
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ProblemDetail> tooLarge(MaxUploadSizeExceededException e) {
+        return problem(HttpStatus.PAYLOAD_TOO_LARGE, "file-too-large",
+                "Uploaded file exceeds the maximum allowed size");
     }
 
     @ExceptionHandler(StepParseException.class)
