@@ -35,6 +35,9 @@ dist-ssr/
 coverage/
 frontend/.env.local
 frontend/.env.*.local
+# tsc build outputs (we ship .ts sources; vite handles bundling)
+frontend/tsconfig.tsbuildinfo
+frontend/src/**/*.js
 
 # ---- OS ----
 .DS_Store

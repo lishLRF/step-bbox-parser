@@ -12,6 +12,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "noEmit": true,
     "baseUrl": ".",
     "paths": { "@/*": ["src/*"] }
   },

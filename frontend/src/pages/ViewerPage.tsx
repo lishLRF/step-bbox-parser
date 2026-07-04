@@ -1,21 +1,32 @@
-/**
- * Top-level page: uploader (left), 3D viewer (center), assembly tree (right).
- * Implementation pending — this is a placeholder so the app boots.
- */
+import { ModelUploader } from '../components/ModelUploader';
+import { BBoxViewer } from '../components/BBoxViewer';
+import { TreeView } from '../components/TreeView';
+import { useViewerStore } from '../store/viewerStore';
+
+/** Top-level page: uploader (left), 3D viewer (center), assembly tree (right). */
 export function ViewerPage() {
+  const { metadata } = useViewerStore();
   return (
     <div className="viewer-layout">
       <aside className="panel panel--left">
         <h2>Upload</h2>
-        {/* <ModelUploader /> */}
+        <ModelUploader />
+        {metadata && (
+          <div className="metadata">
+            <div><strong>{metadata.fileName}</strong></div>
+            <div>CAD: {metadata.sourceCadSystem}</div>
+            <div>Schema: {metadata.schema.join(', ')}</div>
+            <div>Unit: {metadata.unit}</div>
+            <div>Parts: {metadata.partCount}</div>
+          </div>
+        )}
       </aside>
       <main className="panel panel--center">
-        <h2>3D Viewer</h2>
-        {/* <BBoxViewer /> */}
+        <BBoxViewer />
       </main>
       <aside className="panel panel--right">
         <h2>Assembly Tree</h2>
-        {/* <TreeView /> */}
+        <TreeView />
       </aside>
     </div>
   );
