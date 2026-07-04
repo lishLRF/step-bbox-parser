@@ -61,20 +61,32 @@ step-bbox-parser/
 - Node.js 20+ (npm or pnpm)
 - (Maven is bundled via `./mvnw` — no global install needed)
 
-### Backend
+### One-command dev (recommended)
+
+Both servers auto-pick **free ports** (nothing hard-coded; coexists with other
+software). Backend writes its chosen port to a `.port` file; the launcher reads
+it, then starts the frontend.
 
 ```bash
-cd backend
-./mvnw spring-boot:run      # Windows: mvnw.cmd spring-boot:run
-# API on http://localhost:8080
+node scripts/dev.mjs        # Ctrl+C stops both cleanly and releases the ports
 ```
 
-### Frontend
+The script prints both URLs (e.g. `backend on http://localhost:12785`,
+`frontend on http://localhost:5173`). Stop with **Ctrl+C** — the backend is
+shut down gracefully via `/actuator/shutdown` so its port is released and the
+`.port` file is cleaned up.
+
+### Manual (two terminals)
 
 ```bash
+# Terminal 1 — backend (auto-picks a free port, prints it)
+cd backend
+./mvnw spring-boot:run      # Windows: mvnw.cmd spring-boot:run
+
+# Terminal 2 — frontend (reads the backend's port from .port, auto-picks its own)
 cd frontend
 npm install
-npm run dev                 # http://localhost:5173
+npm run dev
 ```
 
 ## 🔌 API (draft)
