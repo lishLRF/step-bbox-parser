@@ -24,6 +24,8 @@ public class BoundingBoxCalculator {
     /** Cache: product id → its local-frame AABB (geometry is shared across instances). */
     private final Map<Integer, BoundingBox> productBboxCache = new HashMap<>();
     private ParsedStepFile cachedFile;
+    /** Index: product id → its shape representation entity (built once per file). */
+    private Map<Integer, StepEntity> productToShapeRep;
 
     /**
      * Compute the AABB of a single part given its shape representation entity,
@@ -50,14 +52,19 @@ public class BoundingBoxCalculator {
      * non-standard formation chain.
      */
     public BoundingBox computeForLeaf(ParsedStepFile file, AssemblyNode leaf) {
-        // Cache invalidation when the file changes.
-        if (cachedFile != file) { productBboxCache.clear(); cachedFile = file; }
+        // Cache invalidation when the file changes: clear caches and rebuild the
+        // product→shape-rep index in one O(N) pass instead of O(N) per product.
+        if (cachedFile != file) {
+            productBboxCache.clear();
+            productToShapeRep = buildProductToShapeRepIndex(file);
+            cachedFile = file;
+        }
         int productId = leaf.productId();
         if (productId < 0) return null;
         BoundingBox local = productBboxCache.get(productId);
         if (local == null) {
             if (productBboxCache.containsKey(productId)) return null; // known "no geometry"
-            StepEntity shapeRep = findShapeRepresentationForProduct(file, productId);
+            StepEntity shapeRep = productToShapeRep.get(productId);
             if (shapeRep == null) {
                 productBboxCache.put(productId, null);
                 return null;
@@ -71,8 +78,7 @@ public class BoundingBoxCalculator {
             productBboxCache.put(productId, local);
         }
         if (local == null) return null;
-        // Transform the local-frame AABB's 8 corners into root coordinates and
-        // re-bind. (Cheaper than re-walking geometry per instance.)
+        // Transform the local-frame AABB's 8 corners into root coordinates.
         Transform4 t = leaf.rootTransform();
         double mnX = Double.POSITIVE_INFINITY, mnY = Double.POSITIVE_INFINITY, mnZ = Double.POSITIVE_INFINITY;
         double mxX = Double.NEGATIVE_INFINITY, mxY = Double.NEGATIVE_INFINITY, mxZ = Double.NEGATIVE_INFINITY;
@@ -88,64 +94,63 @@ public class BoundingBoxCalculator {
     }
 
     /**
-     * Find the SHAPE_DEFINITION_REPRESENTATION rep for a PRODUCT id, robust to
-     * Creo's non-standard formation chain.
-     *
-     * <p>Walk: collect every PRODUCT_DEFINITION_SHAPE whose {@code .definition}
-     * ref points at a PRODUCT_DEFINITION whose formation → this PRODUCT. Then
-     * find the SHAPE_DEFINITION_REPRESENTATION referencing that PDS. Falls back
-     * to a direct scan: any ADVANCED_*_SHAPE_REPRESENTATION whose items include
-     * a brep whose product matches — but the PDS path covers the common case.
+     * One-pass index: product id → shape representation entity. Walks every
+     * entity exactly once, building PD→PRODUCT and PDS→PD→PRODUCT and
+     * SDR(PDS,rep) maps in a single scan, so per-leaf lookups are O(1).
      */
-    private StepEntity findShapeRepresentationForProduct(ParsedStepFile file, int productId) {
-        if (productId < 0) return null;
+    private static Map<Integer, StepEntity> buildProductToShapeRepIndex(ParsedStepFile file) {
         Map<Integer, StepEntity> ents = file.entities();
-
-        // Build PD -> PRODUCT map (try both formation types; tolerate Creo's
-        // broken chain by also accepting PRODUCT_DEFINITION_FORMATION*).
+        Map<Integer, StepEntity> result = new HashMap<>();
+        // Pass 1: collect formations→product, PDs, PDSs, SDRs in one loop.
         Map<Integer, Integer> pdfToProduct = new HashMap<>();
+        Map<Integer, Integer> pdToProduct = new HashMap<>();
+        Map<Integer, Integer> pdsToPd = new HashMap<>();          // PDS id → its definition PD
+        java.util.List<int[]> sdrs = new java.util.ArrayList<>(); // (pdsId, repId)
         for (StepEntity e : ents.values()) {
             String t = e.type();
-            if (t.equals("PRODUCT_DEFINITION_FORMATION")
-                    || t.equals("PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE")) {
-                StepEntity.Ref prodRef = e.refAt(2);
-                if (prodRef != null) pdfToProduct.put(e.id(), prodRef.id());
-            }
-        }
-        Map<Integer, Integer> pdToProduct = new HashMap<>();
-        for (StepEntity e : ents.values()) {
-            if (e.type().equals("PRODUCT_DEFINITION")) {
-                // args = (id, description, #formation_or_context, #frame_of_reference)
-                // formation is normally arg 2; Creo may put a context there. Try all refs.
-                for (Object a : e.args()) {
-                    if (a instanceof StepEntity.Ref r) {
-                        Integer prod = pdfToProduct.get(r.id());
-                        if (prod != null) { pdToProduct.put(e.id(), prod); break; }
+            switch (t) {
+                case "PRODUCT_DEFINITION_FORMATION",
+                     "PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE" -> {
+                    StepEntity.Ref prodRef = e.refAt(2);
+                    if (prodRef != null) pdfToProduct.put(e.id(), prodRef.id());
+                }
+                case "PRODUCT_DEFINITION" -> {
+                    for (Object a : e.args()) {
+                        if (a instanceof StepEntity.Ref r) {
+                            Integer prod = pdfToProduct.get(r.id());
+                            if (prod != null) { pdToProduct.put(e.id(), prod); break; }
+                        }
                     }
                 }
-            }
-        }
-        // PDS 'name','desc',#definition(=PD) → find PDS whose PD maps to our product.
-        int targetProduct = productId;
-        for (StepEntity e : ents.values()) {
-            if (!e.type().equals("PRODUCT_DEFINITION_SHAPE")) continue;
-            StepEntity.Ref defRef = null;
-            for (Object a : e.args()) if (a instanceof StepEntity.Ref r) defRef = r;
-            if (defRef == null) continue;
-            Integer prod = pdToProduct.get(defRef.id());
-            if (prod == null || prod != targetProduct) continue;
-            // Find SHAPE_DEFINITION_REPRESENTATION referencing this PDS as arg 0.
-            for (StepEntity sdr : ents.values()) {
-                if (sdr.type().equals("SHAPE_DEFINITION_REPRESENTATION") && sdr.args().size() >= 2
-                        && sdr.args().get(0) instanceof StepEntity.Ref r && r.id() == e.id()
-                        && sdr.args().get(1) instanceof StepEntity.Ref repRef) {
-                    StepEntity rep = ents.get(repRef.id());
-                    if (rep != null) return rep;
+                case "PRODUCT_DEFINITION_SHAPE" -> {
+                    // Last ref in args is the .definition (a PD).
+                    StepEntity.Ref defRef = null;
+                    for (Object a : e.args()) if (a instanceof StepEntity.Ref r) defRef = r;
+                    if (defRef != null) pdsToPd.put(e.id(), defRef.id());
                 }
+                case "SHAPE_DEFINITION_REPRESENTATION" -> {
+                    if (e.args().size() >= 2
+                            && e.args().get(0) instanceof StepEntity.Ref pdsRef
+                            && e.args().get(1) instanceof StepEntity.Ref repRef) {
+                        sdrs.add(new int[]{pdsRef.id(), repRef.id()});
+                    }
+                }
+                default -> { }
             }
         }
-        return null;
+        // Pass 2: link SDRs → product via PDS→PD→PRODUCT.
+        for (int[] sdr : sdrs) {
+            Integer pd = pdsToPd.get(sdr[0]);
+            if (pd == null) continue;
+            Integer product = pdToProduct.get(pd);
+            if (product == null) continue;
+            StepEntity rep = ents.get(sdr[1]);
+            if (rep != null) result.putIfAbsent(product, rep);
+        }
+        return result;
     }
+
+    /** (Per-product shape-rep lookup is now done via {@link #buildProductToShapeRepIndex}.) */
 
     private StepEntity findShapeRepresentation(Map<Integer, StepEntity> ents) {
         StepEntity fallback = null;

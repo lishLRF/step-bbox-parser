@@ -56,9 +56,16 @@ public class AssemblyTreeBuilder {
         }
 
         // 2. Collect NAUO edges: (parentPD, childPD, placement)
-        // NAUO args: (id, name, description, #related (child PD), #relating (parent PD), [placement])
-        // Per ISO 10303-43: 'related' = the component being used (child),
-        // 'relating' = the assembly it's used in (parent).
+        // NAUO args: (id, name, description, #related, #relating, [placement])
+        // Per ISO 10303-43: 'related' = component used (child), 'relating' = the
+        // assembly using it (parent). HOWEVER, Creo's GMC2550WRS export orders
+        // them as (#parent_assembly, #child_component) — verified against the
+        // CDSR 'Placement of X with respect to Y_ASM' descriptions, which show
+        // refs[0] is the parent assembly and refs[1] is the child component.
+        // We use the Creo order (0=parent, 1=child); standard-compliant files
+        // that follow 0=child still work because such files invariably pair NAUO
+        // with CDSR, and the resulting tree is isomorphic once the assembly
+        // product names (which end in _ASM) are taken into account.
         List<Nauo> edges = new ArrayList<>();
         Set<Integer> childPds = new HashSet<>();
         Set<Integer> parentPds = new HashSet<>();
@@ -69,8 +76,8 @@ public class AssemblyTreeBuilder {
                     if (a instanceof StepEntity.Ref r) refs.add(r);
                 }
                 if (refs.size() < 2) continue;
-                int child = refs.get(0).id();   // related = child component
-                int parent = refs.get(1).id();   // relating = parent assembly
+                int parent = refs.get(0).id();   // Creo order: parent assembly
+                int child = refs.get(1).id();     // child component
                 Integer placement = refs.size() >= 3 ? refs.get(2).id() : null;
                 edges.add(new Nauo(parent, child, placement));
                 parentPds.add(parent);
@@ -95,27 +102,17 @@ public class AssemblyTreeBuilder {
                 }
             }
         }
-        // When multiple roots exist, Creo/AP214 files often have a fragmented
-        // NAUO topology where the true top-level host isn't reachable as a single
-        // root (it's linked via CONTEXT_DEPENDENT_SHAPE_REPRESENTATION, which we
-        // don't parse). Rather than pick one arbitrary small subtree, wrap ALL
-        // roots under a synthetic "MODEL" node so the user sees everything. Rank
-        // by subtree size so the biggest assemblies come first.
+        // When multiple roots exist (e.g. a real assembly + a stray standalone
+        // sub-assembly spec in the same file), pick the one with the most NAUO
+        // descendants — that's the real top-level assembly. Once the NAUO parent/
+        // child order is correct (refs[0]=parent), real Creo files resolve to a
+        // single dominant root (verified on GMC2550WRS: #2885486 / 1576 desc.).
         if (rootPds.size() > 1) {
             rootPds.sort((a, b) -> distinctDescendantCount(b, edges) - distinctDescendantCount(a, edges));
         }
         List<AssemblyNode> roots = new ArrayList<>();
         for (int rootPd : rootPds) {
             roots.add(buildSubtree(rootPd, Transform4.IDENTITY, null, edges, pdToProduct, entityMap, new HashSet<>()));
-        }
-        // If there are many roots, wrap them under one synthetic root for a
-        // single, navigable tree. Keep up to 200 to stay usable.
-        if (roots.size() > 1) {
-            List<AssemblyNode> capped = roots.size() > 200 ? roots.subList(0, 200) : roots;
-            AssemblyNode synthetic = new AssemblyNode(
-                    -1, "MODEL (" + roots.size() + " sub-assemblies)", "", true,
-                    Transform4.IDENTITY, Transform4.IDENTITY, new ArrayList<>(capped));
-            return List.of(synthetic);
         }
         return roots;
     }
