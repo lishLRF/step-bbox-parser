@@ -1,0 +1,38 @@
+name: 🐛 Bug report
+description: Something is not working as expected
+labels: ["bug", "triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Steps to reproduce + expected vs actual behavior.
+      placeholder: |
+        1. Uploaded file X.stp
+        2. Clicked 'Parse'
+        3. Expected: tree + bbox
+        4. Got: error / wrong bbox
+    validations:
+      required: true
+  - type: input
+    id: step-file
+    attributes:
+      label: Sample STEP file (if shareable)
+      placeholder: attach or link the .stp
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - backend / parser
+        - backend / REST API
+        - frontend / viewer
+        - frontend / tree
+        - other

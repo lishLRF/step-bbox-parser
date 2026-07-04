@@ -1,0 +1,62 @@
+# ---- Java / Maven ----
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+.mvn/wrapper/maven-wrapper.jar
+
+# ---- Gradle (if ever used) ----
+.gradle/
+build/
+
+# ---- IDE ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+.project
+.classpath
+.settings/
+.factorypath
+
+# ---- Node / Frontend ----
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+coverage/
+frontend/.env.local
+frontend/.env.*.local
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+# Windows reserved device name that can't be deleted via shell
+nul
+
+# ---- Logs / tmp ----
+*.log
+logs/
+tmp/
+temp/
+
+# ---- Build caches ----
+*.bincache
+
+# ---- Runtime uploaded files (keep dir, ignore contents) ----
+backend/uploads/
+backend/work/
+
+# ---- Large sample binaries (keep small ones, ignore huge) ----
+samples/step/*.stp.gz
+samples/step/*.zip

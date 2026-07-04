@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: step-bbox-parser
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB
+
+server:
+  port: 8080
+
+parser:
+  upload-dir: ${java.io.tmpdir}/step-bbox-parser/uploads
+  work-dir: ${java.io.tmpdir}/step-bbox-parser/work
+  # Bounding-box strategy: BREP (precise) or APPROX (vertex-cloud, faster)
+  bbox-strategy: BREP
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

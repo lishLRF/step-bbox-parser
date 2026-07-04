@@ -1,0 +1,29 @@
+:root {
+  --bg: #0f1115;
+  --panel: #1a1d24;
+  --fg: #e6e6e6;
+  --accent: #4aa8ff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+.viewer-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr 320px;
+  height: 100vh;
+}
+
+.panel {
+  padding: 16px;
+  border-right: 1px solid #2a2e37;
+  overflow: auto;
+}
+
+.panel--right { border-right: none; border-left: 1px solid #2a2e37; }

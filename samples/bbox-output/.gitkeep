@@ -1,0 +1,9 @@
+# Sample files
+
+Place small, shareable STEP files in `samples/step/` and their expected
+parser output in `samples/bbox-output/`. The two directories are paired by
+filename: `foo.stp` ↔ `foo.json`.
+
+Keep committed samples under ~5 MB; use Git LFS or external storage for larger
+files (the production GMC2550WRS host model is large and should not be
+committed).
