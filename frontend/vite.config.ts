@@ -17,7 +17,9 @@ function readBackendPort(): number {
   const candidates = [
     process.env.STEP_BBOX_BACKEND_PORT,
     process.env.STEP_BBOX_WORK_DIR && join(process.env.STEP_BBOX_WORK_DIR, '.port'),
-    // Match the path the backend writes (application.yml + PortPublisher).
+    // Match application.yml: Z:/Project/3Dbox-step/cache/work/.port
+    join('Z:', 'Project', '3Dbox-step', 'cache', 'work', '.port'),
+    // Legacy C: temp location.
     join(tmpdir(), 'step-bbox-parser', 'work', '.port'),
   ].filter(Boolean) as string[];
 

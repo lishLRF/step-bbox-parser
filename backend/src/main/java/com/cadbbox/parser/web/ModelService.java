@@ -16,6 +16,7 @@ import com.cadbbox.parser.web.dto.Vec3;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -51,6 +52,8 @@ public class ModelService {
     private final Path bboxScript;
     private final Path bboxCacheDir;
     private final Map<String, ParsedModel> store = new ConcurrentHashMap<>();
+    /** Per-model upload/bbox progress: "12/6580" or "done". Keyed by model id. */
+    private final Map<String, String> uploadProgress = new ConcurrentHashMap<>();
 
     public ModelService(StepParser parser, AssemblyTreeBuilder treeBuilder,
                         BoundingBoxCalculator bboxCalc, BboxIndexer bboxIndexer,
@@ -228,6 +231,37 @@ public class ModelService {
         return require(id);
     }
 
+    /** Current upload/bbox progress for a model, e.g. "12/6580" or "done" or null. */
+    public String getUploadProgress(String id) {
+        return uploadProgress.get(id);
+    }
+
+    /** Clean up cached files older than the given age (hours). Returns count removed. */
+    public int cleanupOldCaches(int maxAgeHours) {
+        int removed = 0;
+        long cutoff = System.currentTimeMillis() - (long) maxAgeHours * 3600_000;
+        for (Path dir : new Path[]{uploadDir, bboxCacheDir}) {
+            File[] files = dir.toFile().listFiles();
+            if (files == null) continue;
+            for (File f : files) {
+                if (f.lastModified() < cutoff) {
+                    if (f.delete()) removed++;
+                }
+            }
+        }
+        // Also clean old meshes.
+        Path meshDir = Paths.get(uploadDir.toString(), "..", "step-bbox-meshes").normalize();
+        File[] meshFiles = meshDir.toFile().listFiles();
+        if (meshFiles != null) {
+            for (File f : meshFiles) {
+                if (f.lastModified() < cutoff) {
+                    if (f.delete()) removed++;
+                }
+            }
+        }
+        return removed;
+    }
+
     public void delete(String id) {
         store.remove(id);
     }
@@ -351,11 +385,18 @@ public class ModelService {
             }, "bbox-heartbeat-" + modelId);
             heartbeat.setDaemon(true);
             heartbeat.start();
-            // Stream output for diagnostics.
+            // Stream output for diagnostics + progress.
             StringBuilder log = new StringBuilder();
             try (var r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
                 String line;
-                while ((line = r.readLine()) != null) log.append(line).append('\n');
+                while ((line = r.readLine()) != null) {
+                    log.append(line).append('\n');
+                    if (line.startsWith("PROGRESS:")) {
+                        uploadProgress.put(modelId, line.substring("PROGRESS:".length()).trim());
+                    } else if (line.startsWith("DONE:")) {
+                        uploadProgress.put(modelId, "done");
+                    }
+                }
             }
             // Infinite wait — no timeout.
             p.waitFor();

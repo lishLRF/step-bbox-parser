@@ -40,10 +40,19 @@ def tessellate_step(step_path: str, linear_deflection: float, angular_deflection
     mesh = BRepMesh_IncrementalMesh(shape, linear_deflection, False, angular_deflection)
     mesh.Perform()
 
+    # Count faces for progress reporting.
+    face_count_exp = TopExp_Explorer(shape, TopAbs_FACE)
+    total_faces = 0
+    while face_count_exp.More():
+        total_faces += 1
+        face_count_exp.Next()
+    print(f"PROGRESS: 0/{total_faces}", flush=True)
+
     # 3. Walk every face and harvest its triangulation.
     vertices = []
     faces = []
     base = 0
+    faces_done = 0
 
     from OCP.TopoDS import TopoDS
 
@@ -70,7 +79,12 @@ def tessellate_step(step_path: str, linear_deflection: float, angular_deflection
                 a, b, c = tri.Triangle(i).Get()  # returns (a, b, c)
                 faces.append([a - 1 + base, b - 1 + base, c - 1 + base])
             base += n_nodes
+        faces_done += 1
+        if faces_done % 5000 == 0:
+            print(f"PROGRESS: {faces_done}/{total_faces}", flush=True)
         explorer.Next()
+
+    print(f"PROGRESS: {faces_done}/{total_faces}", flush=True)
 
     if not vertices or not faces:
         raise RuntimeError("Tessellation produced no geometry (no triangulated faces found)")

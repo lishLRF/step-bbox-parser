@@ -43,9 +43,13 @@ function candidateTempDirs() {
 }
 
 // Match the path the backend writes (see application.yml + PortPublisher):
-// <tmpdir>/step-bbox-parser/work/.port
+// <cache-dir>/work/.port where cache-dir = Z:/Project/3Dbox-step/cache.
+// Also check legacy C: temp locations for backward compat.
 function candidatePortFiles() {
-  return candidateTempDirs().map((d) => join(d, 'step-bbox-parser', 'work', '.port'));
+  return [
+    join('Z:', 'Project', '3Dbox-step', 'cache', 'work', '.port'),
+    ...candidateTempDirs().map((d) => join(d, 'step-bbox-parser', 'work', '.port')),
+  ];
 }
 let portFile = candidatePortFiles()[0];
 

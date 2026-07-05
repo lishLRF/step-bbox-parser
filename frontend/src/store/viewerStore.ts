@@ -9,7 +9,8 @@ interface ViewerState {
   metadata: ModelMetadata | null;
   tree: TreeNode | null;
   uploading: boolean;
-  uploadProgress: number;
+  uploadProgress: number;      // file upload %
+  bboxProgress: string | null; // "12/6580" from SSE during OCCT bbox
   loading: boolean;
   error: string | null;
   /** Primary (single) selection — drives highlight + inspector. */
@@ -23,6 +24,7 @@ interface ViewerState {
 
   upload: (file: File) => Promise<void>;
   loadTree: (modelId: string) => Promise<void>;
+  watchBboxProgress: (modelId: string) => void;
   select: (id: string | null) => void;
   toggleMulti: (id: string) => void;
   rangeSelect: (id: string) => void;
@@ -42,6 +44,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   tree: null,
   uploading: false,
   uploadProgress: 0,
+  bboxProgress: null,
   loading: false,
   error: null,
   selectedId: null,
@@ -52,14 +55,27 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   expanded: new Set<string>(),
 
   upload: async (file: File) => {
-    set({ uploading: true, uploadProgress: 0, error: null, tree: null, metadata: null });
+    set({ uploading: true, uploadProgress: 0, bboxProgress: null, error: null, tree: null, metadata: null });
     try {
       const meta = await api.uploadStep(file, (pct) => set({ uploadProgress: pct }));
       set({ metadata: meta, uploading: false });
+      // Watch bbox progress via SSE.
+      get().watchBboxProgress(meta.id);
       await get().loadTree(meta.id);
     } catch (e: any) {
       set({ uploading: false, error: e?.response?.data?.detail ?? String(e) });
     }
+  },
+
+  watchBboxProgress: (modelId: string) => {
+    set({ bboxProgress: '0/?' });
+    const es = new EventSource(`/api/models/${modelId}/upload-progress`);
+    es.onmessage = (ev) => {
+      const data = ev.data;
+      set({ bboxProgress: data });
+      if (data === 'done') es.close();
+    };
+    es.onerror = () => { es.close(); };
   },
 
   loadTree: async (modelId: string) => {

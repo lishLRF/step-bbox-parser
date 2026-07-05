@@ -1,12 +1,11 @@
 """
 STEP → per-part AABB JSON. Spawned by the Java backend at upload time.
 
-Uses OCP (OCCT) to load the STEP file and compute a local-frame AABB for every
-solid/shell, keyed by product name. Output is a JSON map:
-  {"part_name": {"min": [x,y,z], "max": [x,y,z]}, ...}
+Outputs progress lines to stdout: "PROGRESS: <done>/<total>" so the backend
+can forward them to the frontend via SSE.
 
-This replaces the text-based CARTESIAN_POINT DFS approach, which failed on
-Creo's complex CDSR-linked geometry chains. OCCT handles all of that natively.
+Uses OCP (OCCT) to load the STEP, tessellate every solid/shell, and compute
+per-part local-frame AABBs.
 """
 import sys
 import argparse
@@ -17,15 +16,11 @@ import numpy as np
 def compute_part_bboxes(step_path: str) -> dict:
     from OCP.STEPControl import STEPControl_Reader
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
-    from OCP.BRep import BRep_Tool
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopAbs import TopAbs_SOLID, TopAbs_SHELL, TopAbs_FACE
-    from OCP.TopLoc import TopLoc_Location
     from OCP.TopoDS import TopoDS
-    from OCP.TColStd import TColStd_IndexedMapOfInteger
-    from OCP.TopExp import TopExp_Explorer
-    from OCP.BRepAdaptor import BRepAdaptor_Surface
-    from OCP.gp import gp_Pnt
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.BRep import BRep_Tool
 
     reader = STEPControl_Reader()
     status = reader.ReadFile(step_path.encode("utf-8") if isinstance(step_path, str) else step_path)
@@ -36,41 +31,45 @@ def compute_part_bboxes(step_path: str) -> dict:
     if shape is None or shape.IsNull():
         raise RuntimeError("STEP reader returned no shape")
 
-    # Tessellate to get vertex coordinates.
+    # Count solids first for progress reporting.
+    count_exp = TopExp_Explorer(shape, TopAbs_SOLID)
+    total_solids = 0
+    while count_exp.More():
+        total_solids += 1
+        count_exp.Next()
+    print(f"PROGRESS: 0/{total_solids}", flush=True)
+
+    # Tessellate the whole shape.
     BRepMesh_IncrementalMesh(shape, 0.1, False, 0.3).Perform()
 
-    # Walk every solid and shell, compute its local AABB from triangulation vertices.
-    # Group by product name if available; otherwise by solid/shell index.
+    triangulate = getattr(BRep_Tool, "Triangulation", None) or getattr(BRep_Tool, "Triangulation_s")
+
+    # Walk every solid, compute its local AABB.
     result = {}
-
-    # Strategy: iterate over all solids first, then standalone shells not in solids.
-    explorer_types = [
-        (TopAbs_SOLID, "solid"),
-        (TopAbs_SHELL, "shell"),
-    ]
-
     part_idx = 0
-    for topo_type, label in explorer_types:
-        explorer = TopExp_Explorer(shape, topo_type)
-        while explorer.More():
-            subshape = explorer.Current()
-            # Get bounding box of this sub-shape via triangulation.
-            vertices = _collect_vertices(subshape)
-            if vertices and len(vertices) >= 3:
-                arr = np.array(vertices)
-                mn = arr.min(axis=0)
-                mx = arr.max(axis=0)
-                name = f"_{label}_{part_idx}"
-                result[name] = {
-                    "min": [float(mn[0]), float(mn[1]), float(mn[2])],
-                    "max": [float(mx[0]), float(mx[1]), float(mx[2])],
-                    "vertexCount": len(vertices),
-                }
-                part_idx += 1
-            explorer.Next()
 
-    # Also compute the overall bounding box.
-    all_verts = _collect_vertices(shape)
+    explorer = TopExp_Explorer(shape, TopAbs_SOLID)
+    while explorer.More():
+        subshape = explorer.Current()
+        vertices = _collect_vertices(subshape, triangulate)
+        if vertices and len(vertices) >= 3:
+            arr = np.array(vertices)
+            mn = arr.min(axis=0)
+            mx = arr.max(axis=0)
+            result[f"_solid_{part_idx}"] = {
+                "min": [float(mn[0]), float(mn[1]), float(mn[2])],
+                "max": [float(mx[0]), float(mx[1]), float(mx[2])],
+                "vertexCount": len(vertices),
+            }
+        part_idx += 1
+        if part_idx % 100 == 0:
+            print(f"PROGRESS: {part_idx}/{total_solids}", flush=True)
+        explorer.Next()
+
+    print(f"PROGRESS: {part_idx}/{total_solids}", flush=True)
+
+    # Overall bbox.
+    all_verts = _collect_vertices(shape, triangulate)
     if all_verts:
         arr = np.array(all_verts)
         mn = arr.min(axis=0)
@@ -84,16 +83,8 @@ def compute_part_bboxes(step_path: str) -> dict:
     return result
 
 
-def _collect_vertices(shape) -> list:
-    """Collect all triangulated vertex coordinates from a shape."""
-    from OCP.BRep import BRep_Tool
-    from OCP.TopExp import TopExp_Explorer
-    from OCP.TopAbs import TopAbs_FACE
-    from OCP.TopLoc import TopLoc_Location
-    from OCP.TopoDS import TopoDS
-
+def _collect_vertices(shape, triangulate) -> list:
     verts = []
-    triangulate = getattr(BRep_Tool, "Triangulation", None) or getattr(BRep_Tool, "Triangulation_s")
     explorer = TopExp_Explorer(shape, TopAbs_FACE)
     seen_triangulations = set()
     while explorer.More():
@@ -121,11 +112,10 @@ def main():
     p.add_argument("input", help="input .stp/.step file")
     p.add_argument("output", help="output .json file")
     args = p.parse_args()
-
     bboxes = compute_part_bboxes(args.input)
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(bboxes, f, ensure_ascii=False)
-    print(f"OK: {len(bboxes)} parts -> {args.output}")
+    print(f"DONE: {len(bboxes)} parts -> {args.output}", flush=True)
 
 
 if __name__ == "__main__":

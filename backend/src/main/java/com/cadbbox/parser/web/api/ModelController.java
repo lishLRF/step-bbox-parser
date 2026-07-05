@@ -140,6 +140,38 @@ public class ModelController {
                 "网格生成失败: " + (detail != null ? detail : "unknown"));
     }
 
+    // ---- Upload progress (SSE) ----
+    @GetMapping(value = "/{id}/upload-progress", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter uploadProgress(@PathVariable String id) {
+        org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter = new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(0L);
+        Thread watcher = new Thread(() -> {
+            try {
+                while (true) {
+                    String prog = service.getUploadProgress(id);
+                    if (prog != null) {
+                        emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event().data(prog));
+                        if ("done".equals(prog)) break;
+                    }
+                    Thread.sleep(1000);
+                }
+            } catch (Exception e) {
+                // client disconnected or done
+            } finally {
+                emitter.complete();
+            }
+        }, "progress-" + id);
+        watcher.setDaemon(true);
+        watcher.start();
+        return emitter;
+    }
+
+    // ---- Cache cleanup ----
+    @DeleteMapping("/cache")
+    public Map<String, Object> cleanupCache(@RequestParam(defaultValue = "24") int maxAgeHours) {
+        int removed = service.cleanupOldCaches(maxAgeHours);
+        return Map.of("removed", removed, "maxAgeHours", maxAgeHours);
+    }
+
     // ---- error mapping (RFC 9457 problem+json) ----
 
     @ExceptionHandler(BadFileException.class)

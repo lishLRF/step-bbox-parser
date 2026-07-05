@@ -3,9 +3,19 @@ import { useViewerStore } from '../store/viewerStore';
 
 /** 拖拽 / 点击上传 STEP 文件 */
 export function ModelUploader() {
-  const { uploading, uploadProgress, error, upload } = useViewerStore();
+  const { uploading, uploadProgress, bboxProgress, error, upload } = useViewerStore();
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Parse bbox progress "12/6580" → percentage
+  const bboxPct = (() => {
+    if (!bboxProgress || bboxProgress === 'done') return null;
+    const [done, total] = bboxProgress.split('/');
+    if (total && total !== '?') {
+      return Math.round((parseInt(done) / parseInt(total)) * 100);
+    }
+    return null;
+  })();
 
   const handleFile = (file: File | undefined) => {
     if (!file) return;
@@ -42,6 +52,15 @@ export function ModelUploader() {
             <div className="progressbar">
               <div className="progressbar__fill" style={{ width: `${uploadProgress}%` }} />
             </div>
+          </div>
+        ) : bboxProgress ? (
+          <div className="uploader__progress">
+            <div>{bboxProgress === 'done' ? '✅ 解析完成' : `几何解析中… ${bboxProgress}`}</div>
+            {bboxPct !== null && (
+              <div className="progressbar">
+                <div className="progressbar__fill" style={{ width: `${bboxPct}%` }} />
+              </div>
+            )}
           </div>
         ) : (
           <div className="uploader__hint">
