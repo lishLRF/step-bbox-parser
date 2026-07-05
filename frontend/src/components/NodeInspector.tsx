@@ -1,10 +1,10 @@
 import { useViewerStore } from '../store/viewerStore';
 import type { TreeNode } from '../types/model';
 
-/** Right-side detail panel for the currently-selected node. */
+/** 右侧详情面板，显示当前选中节点的信息 */
 export function NodeInspector() {
   const { tree, selectedId } = useViewerStore();
-  if (!tree || !selectedId) return <div className="inspector inspector--empty">Select a node.</div>;
+  if (!tree || !selectedId) return <div className="inspector inspector--empty">请选择一个节点查看详情。</div>;
   const node = findNode(tree, selectedId);
   if (!node) return null;
   const b = node.boundingBox;
@@ -14,7 +14,7 @@ export function NodeInspector() {
       {node.productLabel && node.productLabel !== node.name && (
         <div className="inspector__label">{node.productLabel}</div>
       )}
-      <div className="inspector__type">{node.type}{node.id.startsWith('merge-') ? ' (合并组)' : ''}</div>
+      <div className="inspector__type">{typeLabel(node.type)}{node.id.startsWith('merge-') ? '（合并组）' : ''}</div>
       {b?.size && b?.center && (
         <table className="inspector__table">
           <tbody>
@@ -30,6 +30,10 @@ export function NodeInspector() {
       <div className="inspector__hint">双击节点名可重命名</div>
     </div>
   );
+}
+
+function typeLabel(t: TreeNode['type']): string {
+  return t === 'ASSEMBLY' ? '装配体' : t === 'SUBASSEMBLY' ? '子装配' : '零件';
 }
 
 function findNode(node: TreeNode, id: string): TreeNode | null {

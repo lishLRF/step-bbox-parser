@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useViewerStore } from '../store/viewerStore';
 
-/** Drag-and-drop / file-picker uploader for STEP files. */
+/** 拖拽 / 点击上传 STEP 文件 */
 export function ModelUploader() {
   const { uploading, uploadProgress, error, upload } = useViewerStore();
   const [dragOver, setDragOver] = useState(false);
@@ -10,7 +10,7 @@ export function ModelUploader() {
   const handleFile = (file: File | undefined) => {
     if (!file) return;
     if (!/\.(stp|step)$/i.test(file.name)) {
-      alert('Only .stp / .step files are accepted');
+      alert('仅支持 .stp / .step 文件');
       return;
     }
     void upload(file);
@@ -38,15 +38,15 @@ export function ModelUploader() {
         />
         {uploading ? (
           <div className="uploader__progress">
-            <div>Uploading… {uploadProgress}%</div>
+            <div>上传中… {uploadProgress}%</div>
             <div className="progressbar">
               <div className="progressbar__fill" style={{ width: `${uploadProgress}%` }} />
             </div>
           </div>
         ) : (
           <div className="uploader__hint">
-            <strong>Drop a .stp / .step file here</strong>
-            <span>or click to choose</span>
+            <strong>拖入 .stp / .step 文件</strong>
+            <span>或点击选择</span>
           </div>
         )}
       </div>

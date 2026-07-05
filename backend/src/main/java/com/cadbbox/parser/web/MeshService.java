@@ -37,7 +37,25 @@ public class MeshService {
                        @Value("${mesh.script:scripts/step_to_mesh.py}") String script) {
         this.meshCacheDir = Paths.get(workDir, "step-bbox-meshes");
         this.pythonExe = pythonExe;
-        this.scriptPath = Paths.get(script);
+        // The script path is relative to the project root, but the jar may be
+        // launched from backend/. Resolve to absolute, walking up to find it.
+        Path sp = Paths.get(script);
+        if (!Files.exists(sp)) {
+            // Try resolving relative to the jar's grandparent (project root).
+            String jarLoc = System.getProperty("user.dir");
+            Path projRoot = Paths.get(jarLoc).getParent();
+            if (projRoot != null) {
+                Path candidate = projRoot.resolve(script);
+                if (Files.exists(candidate)) {
+                    sp = candidate.toAbsolutePath();
+                } else {
+                    // Try user.dir itself (already at project root).
+                    Path candidate2 = Paths.get(jarLoc).resolve(script);
+                    if (Files.exists(candidate2)) sp = candidate2.toAbsolutePath();
+                }
+            }
+        }
+        this.scriptPath = sp;
         try { Files.createDirectories(meshCacheDir); } catch (IOException ignored) { }
     }
 

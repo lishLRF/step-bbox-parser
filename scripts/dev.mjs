@@ -16,7 +16,7 @@
  * (deleting .port), and both ports are released.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -55,9 +55,33 @@ for (const f of candidatePortFiles()) { try { rmSync(f, { force: true }); } catc
 function log(tag, msg) { console.log(`[${tag}] ${msg}`); }
 
 log('dev', `root=${root}`);
-log('dev', 'starting backend (mvn spring-boot:run)…');
-
-const be = spawn(isWin ? 'mvn.cmd' : 'mvn', ['spring-boot:run'], { cwd: backend, shell: false, stdio: 'inherit' });
+log('dev', 'starting backend…');
+// Run the backend from the packaged jar. We avoid `mvn spring-boot:run`
+// because that Mojo intermittently fails with ClassNotFoundException on
+// this host (its forked process doesn't always pick up target/classes). The
+// jar is rebuilt on demand — if it's missing or stale, we rebuild it first.
+const jarPath = join(backend, 'target', 'step-bbox-parser-0.1.0-SNAPSHOT.jar');
+let needsBuild = true;
+try {
+  const st = statSync(jarPath);
+  // Rebuild if the jar is older than any main source file.
+  const srcDir = join(backend, 'src', 'main', 'java');
+  let newestSrc = 0;
+  for (const f of readdirSync(srcDir, { recursive: true })) {
+    const p = join(srcDir, String(f));
+    try { if (p.endsWith('.java')) newestSrc = Math.max(newestSrc, statSync(p).mtimeMs); } catch {}
+  }
+  needsBuild = st.mtimeMs < newestSrc;
+} catch { /* jar missing */ }
+if (needsBuild) {
+  log('dev', 'rebuilding backend jar (mvn package -DskipTests)…');
+  const build = spawnSync(isWin ? 'mvn.cmd' : 'mvn',
+    ['-q', '-B', 'package', '-DskipTests'],
+    { cwd: backend, shell: isWin, stdio: 'inherit' });
+  if (build.status !== 0) { log('dev', 'backend build failed'); process.exit(1); }
+}
+const be = spawn('java', ['-jar', jarPath],
+    { cwd: backend, shell: false, stdio: 'inherit' });
 
 // Wait for any of the candidate .port files to appear (max 60s).
 const deadline = Date.now() + 60_000;
@@ -83,7 +107,8 @@ if (!backendPort) {
 log('dev', `backend is up on http://localhost:${backendPort}`);
 
 log('dev', 'starting frontend (npm run dev)…');
-const fe = spawn(isWin ? 'npm.cmd' : 'npm', ['run', 'dev'], { cwd: frontend, shell: false, stdio: 'inherit' });
+const fe = spawn(isWin ? 'npm.cmd' : 'npm', ['run', 'dev'],
+    { cwd: frontend, shell: isWin, stdio: 'inherit' });
 
 // Forward Ctrl+C to both children, then exit.
 async function shutdown() {

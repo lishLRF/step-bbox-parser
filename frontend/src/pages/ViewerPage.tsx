@@ -6,10 +6,10 @@ import { NodeInspector } from '../components/NodeInspector';
 import { useViewerStore, type DisplayMode, type BBoxStyle } from '../store/viewerStore';
 
 /**
- * Three-column workspace:
- *   left   — assembly tree + uploader + tools
- *   center — whole-machine model (real geometry, when available)
- *   right  — bounding-box skeleton (grouped-colored, toggle wireframe/solid)
+ * 三栏工作区：
+ *   左栏 — 上传 + 工具 + 装配树
+ *   中栏 — 整机模型（真实几何）
+ *   右栏 — 包围盒骨架（分组着色，可切线框/实心）
  */
 export function ViewerPage() {
   const {
@@ -20,20 +20,21 @@ export function ViewerPage() {
   return (
     <div className="viewer-layout viewer-layout--three">
       <aside className="panel panel--left">
-        <h2>Upload</h2>
+        <h2>上传模型</h2>
         <ModelUploader />
         {metadata && (
           <div className="metadata">
             <div><strong>{metadata.fileName}</strong></div>
-            <div>CAD: {metadata.sourceCadSystem}</div>
-            <div>Schema: {metadata.schema.join(', ')}</div>
-            <div>Unit: {metadata.unit}</div>
-            <div>Parts: {metadata.partCount}</div>
+            <div>来源 CAD：{metadata.sourceCadSystem}</div>
+            <div>架构：{metadata.schema.join('、')}</div>
+            <div>单位：{metadata.unit}</div>
+            <div>零件数：{metadata.partCount}</div>
+            <div>装配数：{metadata.assemblyCount}</div>
           </div>
         )}
         {metadata && (
           <div className="toolbar toolbar--left">
-            <div className="toolbar__label">包围盒显示</div>
+            <div className="toolbar__label">包围盒样式</div>
             {(['solid', 'wireframe'] as BBoxStyle[]).map((s) => (
               <button
                 key={s}
@@ -50,11 +51,11 @@ export function ViewerPage() {
                 className={`btn ${displayMode === m ? 'btn--active' : ''}`}
                 onClick={() => setDisplayMode(m)}
               >
-                {m === 'all' ? '全部' : m === 'subtree' ? '仅选中子树' : '仅叶子'}
+                {m === 'all' ? '全部' : m === 'subtree' ? '仅选中子树' : '仅零件'}
               </button>
             ))}
             <div className="toolbar__label">导出</div>
-            <button className="btn" onClick={() => exportStep()}>导出 STEP</button>
+            <button className="btn" onClick={() => exportStep()}>导出骨架 STEP</button>
           </div>
         )}
       </aside>
@@ -69,14 +70,14 @@ export function ViewerPage() {
         <BBoxViewer />
         {multiSelected.size >= 2 && (
           <button className="fab" onClick={() => mergeSelected()}>
-            合并 {multiSelected.size} 个
+            合并 {multiSelected.size} 个零件
           </button>
         )}
       </section>
 
       <aside className="panel panel--right">
         <NodeInspector />
-        <h2>Assembly Tree</h2>
+        <h2>装配树</h2>
         <TreeView />
         {multiSelected.size > 0 && (
           <div className="multiselect-hint">

@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { useViewerStore } from '../store/viewerStore';
 import type { TreeNode } from '../types/model';
 
-/** Recursive assembly-tree view with multi-select, expand/collapse, search. */
+/** 递归装配树视图，支持多选、展开/折叠、搜索 */
 export function TreeView() {
   const { tree, search, loading } = useViewerStore();
-  if (loading) return <div className="tree">Loading tree…</div>;
-  if (!tree) return <div className="tree tree--empty">No model loaded.</div>;
+  if (loading) return <div className="tree">正在加载装配树…</div>;
+  if (!tree) return <div className="tree tree--empty">尚未加载模型。</div>;
   return (
     <div className="tree">
       <input

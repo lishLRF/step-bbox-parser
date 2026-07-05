@@ -12,7 +12,7 @@ import type { BoundingBox, TreeNode } from '../types/model';
  */
 export function BBoxViewer() {
   const { tree, selectedId, multiSelected, displayMode, bboxStyle } = useViewerStore();
-  if (!tree) return <div className="viewer viewer--empty">Upload a model to see its bounding boxes.</div>;
+  if (!tree) return <div className="viewer viewer--empty">上传模型后显示包围盒骨架。</div>;
 
   // Assign each node a color keyed by its parent's id (siblings share a hue).
   const colorByParent = new Map<string, string>();

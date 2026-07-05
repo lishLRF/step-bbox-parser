@@ -131,6 +131,15 @@ public class ModelController {
                 .body(glb);
     }
 
+    @ExceptionHandler(java.io.IOException.class)
+    public ResponseEntity<ProblemDetail> meshIoError(java.io.IOException e) {
+        String detail = e.getMessage();
+        // Truncate very long converter logs for the response body.
+        if (detail != null && detail.length() > 500) detail = detail.substring(0, 500) + "...";
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "mesh-generation-failed",
+                "网格生成失败: " + (detail != null ? detail : "unknown"));
+    }
+
     // ---- error mapping (RFC 9457 problem+json) ----
 
     @ExceptionHandler(BadFileException.class)
