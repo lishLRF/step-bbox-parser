@@ -124,13 +124,13 @@ public class ModelService {
         AssemblyNode root = m.roots().get(0);
         AnnotationStore.Annotations ann;
         try { ann = annotations.load(id); } catch (IOException e) { ann = new AnnotationStore.Annotations(); }
-        // Build a list of OCCT per-solid bboxes (skip shells to avoid duplicates;
-        // each solid already includes its shell). Sort by size descending so
-        // larger parts (more visually significant) get matched first.
+        // Build a list of OCCT per-part bboxes (both solids and shells, since
+        // Creo exports many parts as open shells). Each entry is [mnX,mnY,mnZ,mxX,mxY,mxZ].
         java.util.List<double[]> occtParts = new java.util.ArrayList<>();
         if (m.occtBboxes() != null) {
             for (var entry : m.occtBboxes().entrySet()) {
-                if (entry.getKey().startsWith("_solid_")) {
+                String key = entry.getKey();
+                if (key.startsWith("_solid_") || key.startsWith("_shell_")) {
                     occtParts.add(entry.getValue());
                 }
             }

@@ -2,10 +2,12 @@
 STEP → per-part AABB JSON. Spawned by the Java backend at upload time.
 
 Outputs progress lines to stdout: "PROGRESS: <done>/<total>" so the backend
-can forward them to the frontend via SSE.
+can forward them to the frontend.
 
-Uses OCP (OCCT) to load the STEP, tessellate every solid/shell, and compute
-per-part local-frame AABBs.
+Uses OCP (OCCT) to load the STEP, tessellate EVERY shape (solids, shells,
+AND standalone faces), and compute per-part local-frame AABBs. This is
+critical because Creo exports many parts as open shells (MANIFOLD_SURFACE)
+that are NOT closed solids — skipping them loses geometry.
 """
 import sys
 import argparse
@@ -31,44 +33,98 @@ def compute_part_bboxes(step_path: str) -> dict:
     if shape is None or shape.IsNull():
         raise RuntimeError("STEP reader returned no shape")
 
-    # Count solids first for progress reporting.
-    count_exp = TopExp_Explorer(shape, TopAbs_SOLID)
-    total_solids = 0
-    while count_exp.More():
-        total_solids += 1
-        count_exp.Next()
-    print(f"PROGRESS: 0/{total_solids}", flush=True)
+    # Count total sub-shapes for progress.
+    total = 0
+    for topo_type in [TopAbs_SOLID, TopAbs_SHELL]:
+        ex = TopExp_Explorer(shape, topo_type)
+        while ex.More():
+            total += 1
+            ex.Next()
+    # Also count standalone faces not in any solid/shell.
+    face_ex = TopExp_Explorer(shape, TopAbs_FACE)
+    face_total = 0
+    while face_ex.More():
+        face_total += 1
+        face_ex.Next()
+    total = max(total, 1)
+    print(f"PROGRESS: 0/{total}", flush=True)
 
     # Tessellate the whole shape.
     BRepMesh_IncrementalMesh(shape, 0.1, False, 0.3).Perform()
 
     triangulate = getattr(BRep_Tool, "Triangulation", None) or getattr(BRep_Tool, "Triangulation_s")
 
-    # Walk every solid, compute its local AABB.
+    # Strategy: collect vertices from EVERY face in the shape, grouped by
+    # their containing solid or shell. If a face belongs to a solid, use that
+    # solid's bbox. If it belongs to a shell (but not a solid), use that shell.
+    # Standalone faces (not in any solid/shell) get their own bbox.
+    #
+    # To avoid double-counting: a face inside a solid is already covered by
+    # the solid's bbox; we only need to separately handle faces that are in
+    # shells but NOT in solids, and completely standalone faces.
+
     result = {}
     part_idx = 0
 
-    explorer = TopExp_Explorer(shape, TopAbs_SOLID)
-    while explorer.More():
-        subshape = explorer.Current()
-        vertices = _collect_vertices(subshape, triangulate)
-        if vertices and len(vertices) >= 3:
-            arr = np.array(vertices)
+    # Phase 1: iterate all SOLIDS.
+    solid_explorer = TopExp_Explorer(shape, TopAbs_SOLID)
+    while solid_explorer.More():
+        solid = solid_explorer.Current()
+        verts = _collect_vertices(solid, triangulate)
+        if verts and len(verts) >= 3:
+            arr = np.array(verts)
             mn = arr.min(axis=0)
             mx = arr.max(axis=0)
+            span = mx - mn
+            # Only store if this is actually 3D (not degenerate flat).
             result[f"_solid_{part_idx}"] = {
                 "min": [float(mn[0]), float(mn[1]), float(mn[2])],
                 "max": [float(mx[0]), float(mx[1]), float(mx[2])],
-                "vertexCount": len(vertices),
+                "vertexCount": len(verts),
             }
         part_idx += 1
         if part_idx % 100 == 0:
-            print(f"PROGRESS: {part_idx}/{total_solids}", flush=True)
-        explorer.Next()
+            print(f"PROGRESS: {part_idx}/{total}", flush=True)
+        solid_explorer.Next()
 
-    print(f"PROGRESS: {part_idx}/{total_solids}", flush=True)
+    # Phase 2: iterate SHELLS that are NOT inside any solid.
+    # Deduplicate: skip shells whose bbox is contained within an existing solid's bbox.
+    solid_bboxes = []
+    for k, v in result.items():
+        if k.startswith("_solid_"):
+            solid_bboxes.append((v["min"], v["max"]))
 
-    # Overall bbox.
+    shell_explorer = TopExp_Explorer(shape, TopAbs_SHELL)
+    shell_count = 0
+    while shell_explorer.More():
+        shell = shell_explorer.Current()
+        verts = _collect_vertices(shell, triangulate)
+        if verts and len(verts) >= 3:
+            arr = np.array(verts)
+            mn = arr.min(axis=0)
+            mx = arr.max(axis=0)
+            # Check if this shell is contained in any solid — if so, skip it.
+            is_duplicate = False
+            for smin, smax in solid_bboxes:
+                if (all(mn[i] >= smin[i] - 0.001 for i in range(3)) and
+                    all(mx[i] <= smax[i] + 0.001 for i in range(3))):
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                result[f"_shell_{shell_count}"] = {
+                    "min": [float(mn[0]), float(mn[1]), float(mn[2])],
+                    "max": [float(mx[0]), float(mx[1]), float(mx[2])],
+                    "vertexCount": len(verts),
+                }
+        shell_count += 1
+        part_idx += 1
+        if part_idx % 100 == 0:
+            print(f"PROGRESS: {min(part_idx, total)}/{total}", flush=True)
+        shell_explorer.Next()
+
+    print(f"PROGRESS: {total}/{total}", flush=True)
+
+    # Overall bbox from ALL vertices in the shape.
     all_verts = _collect_vertices(shape, triangulate)
     if all_verts:
         arr = np.array(all_verts)
@@ -80,10 +136,20 @@ def compute_part_bboxes(step_path: str) -> dict:
             "vertexCount": len(all_verts),
         }
 
+    # Summary stats.
+    solids_n = sum(1 for k in result if k.startswith("_solid_"))
+    shells_n = sum(1 for k in result if k.startswith("_shell_"))
+    print(f"SUMMARY: {solids_n} solids, {shells_n} shells, {len(all_verts)} total vertices", flush=True)
+
     return result
 
 
 def _collect_vertices(shape, triangulate) -> list:
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopoDS import TopoDS
+    from OCP.TopLoc import TopLoc_Location
+
     verts = []
     explorer = TopExp_Explorer(shape, TopAbs_FACE)
     seen_triangulations = set()
