@@ -57,6 +57,27 @@ export function BBoxViewer() {
   const controlsRef = useRef<any>(null);
   if (!tree) return <div className="viewer viewer--empty">上传模型后显示包围盒骨架。</div>;
 
+  // Build the set of "highlighted" node ids: expand selectedId and every
+  // multiSelected id to include ALL descendant PART nodes. Clicking a parent
+  // assembly thus lights up every part box under it.
+  const highlightedIds = new Set<string>();
+  const collectDescendantParts = (node: TreeNode) => {
+    if (node.type === 'PART' || node.id.startsWith('merge-')) {
+      highlightedIds.add(node.id);
+    }
+    for (const c of node.children) collectDescendantParts(c);
+  };
+  const findAndExpand = (root: TreeNode, targetId: string): boolean => {
+    if (root.id === targetId) { collectDescendantParts(root); return true; }
+    for (const c of root.children) { if (findAndExpand(c, targetId)) return true; }
+    return false;
+  };
+  // Expand the primary selection.
+  if (selectedId) findAndExpand(tree, selectedId);
+  // Expand each multi-selected node.
+  for (const mid of multiSelected) findAndExpand(tree, mid);
+  const hasSelection = highlightedIds.size > 0;
+
   const colorByParent = new Map<string, string>();
   const palette = makePalette();
   const boxes: { id: string; box: BoundingBox; color: string; isMerge: boolean }[] = [];
@@ -64,9 +85,6 @@ export function BBoxViewer() {
   const collect = (node: TreeNode, parentKey: string, depth: number) => {
     const isMerge = node.id.startsWith('merge-');
     let groupKey = parentKey;
-    // Only render PART nodes (leaf parts) and merge groups.
-    // Skip ASSEMBLY/SUBASSEMBLY nodes (they carry the overall bbox which
-    // would draw a giant box around everything — not useful).
     const shouldRender = node.type === 'PART' || isMerge;
     if (shouldRender && node.boundingBox) {
       if (displayMode === 'subtree' && selectedId && !isInSubtree(node, selectedId)) {
@@ -97,8 +115,8 @@ export function BBoxViewer() {
             box={b.box}
             color={b.isMerge ? '#ff6b6b' : b.color}
             solid={bboxStyle === 'solid'}
-            dim={!!selectedId && selectedId !== b.id && !multiSelected.has(b.id)}
-            highlighted={selectedId === b.id || multiSelected.has(b.id)}
+            dim={hasSelection && !highlightedIds.has(b.id)}
+            highlighted={highlightedIds.has(b.id)}
           />
         ))}
         <GizmoHelper alignment="bottom-right" margin={[70, 70]}>
