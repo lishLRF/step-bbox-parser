@@ -1,27 +1,31 @@
+import { useState } from 'react';
 import { ModelUploader } from '../components/ModelUploader';
 import { ModelViewer } from '../components/ModelViewer';
 import { BBoxViewer } from '../components/BBoxViewer';
 import { TreeView } from '../components/TreeView';
 import { NodeInspector } from '../components/NodeInspector';
 import { CachedModels } from '../components/CachedModels';
+import { SettingsPanel } from '../components/SettingsPanel';
 import { useViewerStore, type DisplayMode, type BBoxStyle } from '../store/viewerStore';
 
 /**
- * 三栏工作区：
- *   左栏 — 上传 + 工具 + 装配树
- *   中栏 — 整机模型（真实几何）
- *   右栏 — 包围盒骨架（分组着色，可切线框/实心）
+ * 三栏工作区
  */
 export function ViewerPage() {
   const {
     metadata, multiSelected, displayMode, bboxStyle,
     mergeSelected, exportStep, setDisplayMode, setBboxStyle,
   } = useViewerStore();
+  const [showSettings, setShowSettings] = useState(false);
 
   return (
     <div className="viewer-layout viewer-layout--three">
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
       <aside className="panel panel--left">
-        <h2>上传模型</h2>
+        <div className="panel__topbar">
+          <h2>上传模型</h2>
+          <button className="btn btn--sm" onClick={() => setShowSettings(true)}>⚙</button>
+        </div>
         <ModelUploader />
         <CachedModels />
         {metadata && (

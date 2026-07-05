@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -39,12 +40,27 @@ public class ModelController {
     private final ModelService service;
     private final StepExporter stepExporter;
     private final com.cadbbox.parser.web.MeshService meshService;
+    private final com.cadbbox.parser.web.AppSettings appSettings;
 
     public ModelController(ModelService service, StepExporter stepExporter,
-                           com.cadbbox.parser.web.MeshService meshService) {
+                           com.cadbbox.parser.web.MeshService meshService,
+                           com.cadbbox.parser.web.AppSettings appSettings) {
         this.service = service;
         this.stepExporter = stepExporter;
         this.meshService = meshService;
+        this.appSettings = appSettings;
+    }
+
+    // ---- Settings (cache dir, python exe — viewable + editable from frontend) ----
+    @GetMapping("/settings")
+    public java.util.Map<String, String> getSettings() {
+        return appSettings.getAll();
+    }
+
+    @PutMapping("/settings")
+    public java.util.Map<String, String> updateSettings(@RequestBody java.util.Map<String, String> body) {
+        appSettings.updateAll(body);
+        return appSettings.getAll();
     }
 
     @PostMapping("/upload")

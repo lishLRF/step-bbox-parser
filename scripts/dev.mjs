@@ -42,14 +42,26 @@ function candidateTempDirs() {
   return [...new Set(dirs)];
 }
 
-// The backend writes .port to <cache-dir>/work/.port. The cache dir defaults
-// to ./.cache relative to the project root (see application.yml). No hardcoded
-// drive letters — fully portable.
+// The backend writes .port to <cache-dir>/work/.port. The cache dir is
+// configured in Software/config.json (editable from the frontend). Default
+// is ../cache relative to Software/ (sibling directory).
+// We read config.json to find the actual cache dir, then look for .port there.
+function readCacheDirFromConfig() {
+  const configFile = join(root, 'config.json');
+  try {
+    const raw = readFileSync(configFile, 'utf8');
+    const cfg = JSON.parse(raw);
+    if (cfg.cacheDir) return cfg.cacheDir;
+  } catch {}
+  // Default: sibling of Software/
+  return join(root, '..', 'cache');
+}
+
 function candidatePortFiles() {
+  const cacheDir = readCacheDirFromConfig();
   return [
-    join(root, '.cache', 'work', '.port'),
+    join(cacheDir, 'work', '.port'),
     join(process.env.STEP_BBOX_CACHE_DIR || '', 'work', '.port'),
-    ...candidateTempDirs().map((d) => join(d, 'step-bbox-parser', 'work', '.port')),
   ].filter(Boolean);
 }
 let portFile = candidatePortFiles()[0];
