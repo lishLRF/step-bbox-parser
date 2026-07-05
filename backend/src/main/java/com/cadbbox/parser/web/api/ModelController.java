@@ -140,29 +140,11 @@ public class ModelController {
                 "网格生成失败: " + (detail != null ? detail : "unknown"));
     }
 
-    // ---- Upload progress (SSE) ----
-    @GetMapping(value = "/{id}/upload-progress", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
-    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter uploadProgress(@PathVariable String id) {
-        org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter = new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(0L);
-        Thread watcher = new Thread(() -> {
-            try {
-                while (true) {
-                    String prog = service.getUploadProgress(id);
-                    if (prog != null) {
-                        emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event().data(prog));
-                        if ("done".equals(prog)) break;
-                    }
-                    Thread.sleep(1000);
-                }
-            } catch (Exception e) {
-                // client disconnected or done
-            } finally {
-                emitter.complete();
-            }
-        }, "progress-" + id);
-        watcher.setDaemon(true);
-        watcher.start();
-        return emitter;
+    // ---- Upload progress (polling REST) ----
+    @GetMapping("/{id}/progress")
+    public Map<String, String> progress(@PathVariable String id) {
+        String prog = service.getUploadProgress(id);
+        return Map.of("progress", prog != null ? prog : "unknown");
     }
 
     // ---- Cache cleanup ----

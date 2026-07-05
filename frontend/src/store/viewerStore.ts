@@ -69,13 +69,25 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
 
   watchBboxProgress: (modelId: string) => {
     set({ bboxProgress: '0/?' });
-    const es = new EventSource(`/api/models/${modelId}/upload-progress`);
-    es.onmessage = (ev) => {
-      const data = ev.data;
-      set({ bboxProgress: data });
-      if (data === 'done') es.close();
+    // Poll the REST progress endpoint every 2 seconds.
+    const poll = async () => {
+      try {
+        const resp = await fetch(`/api/models/${modelId}/progress`);
+        const data = await resp.json();
+        const prog = data.progress;
+        if (prog && prog !== 'unknown') {
+          set({ bboxProgress: prog });
+          if (prog !== 'done') {
+            setTimeout(poll, 2000);
+          }
+        } else {
+          setTimeout(poll, 2000);
+        }
+      } catch {
+        setTimeout(poll, 2000);
+      }
     };
-    es.onerror = () => { es.close(); };
+    setTimeout(poll, 1000);
   },
 
   loadTree: async (modelId: string) => {
