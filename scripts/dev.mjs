@@ -15,7 +15,7 @@
  * Stop with Ctrl+C — both child processes are killed, Spring runs its @PreDestroy
  * (deleting .port), and both ports are released.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';

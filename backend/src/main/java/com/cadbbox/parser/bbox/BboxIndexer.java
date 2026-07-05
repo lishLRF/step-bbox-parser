@@ -83,13 +83,12 @@ public class BboxIndexer {
         }
 
         // --- Pass 2: for each product's rep, ONE DFS accumulating points ---
-        // A global visited set guards against re-entering geometry already
-        // folded into some product (most entities belong to exactly one product,
-        // so this keeps total work ~O(total entities) rather than O(products × entities)).
+        // IMPORTANT: each product gets its OWN visited set. A global set would
+        // "eat" shared entities (placement axes, edge curves) on the first
+        // product, starving all later products of their geometry. With per-
+        // product sets, the same entity may be walked multiple times (once per
+        // owning product), but every product reliably collects ALL its points.
         Map<Integer, BoundingBox> result = new HashMap<>();
-        Set<Integer> globalSeen = new HashSet<>();
-        int maxId = 0;
-        for (Integer id : ents.keySet()) if (id > maxId) maxId = id;
 
         for (Map.Entry<Integer, StepEntity> entry : productToRep.entrySet()) {
             int productId = entry.getKey();
@@ -98,7 +97,9 @@ public class BboxIndexer {
                     Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY,
                     Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY};
             int[] count = new int[]{0};
-            walkPoints(rep.id(), ents, globalSeen, acc, count);
+            // Per-product visited set — no cross-product sharing.
+            Set<Integer> localSeen = new HashSet<>();
+            walkPoints(rep.id(), ents, localSeen, acc, count);
             if (count[0] > 0) {
                 result.put(productId, new BoundingBox(acc[0], acc[1], acc[2], acc[3], acc[4], acc[5]));
             }
@@ -107,13 +108,13 @@ public class BboxIndexer {
     }
 
     /** DFS from {@code rootId}, folding every CARTESIAN_POINT's coords into acc. */
-    private void walkPoints(int rootId, Map<Integer, StepEntity> ents, Set<Integer> globalSeen,
+    private void walkPoints(int rootId, Map<Integer, StepEntity> ents, Set<Integer> seen,
                             double[] acc, int[] count) {
         Deque<Integer> stack = new ArrayDeque<>();
         stack.push(rootId);
         while (!stack.isEmpty()) {
             int id = stack.pop();
-            if (!globalSeen.add(id)) continue;     // already folded somewhere
+            if (!seen.add(id)) continue;     // already visited in this walk
             StepEntity e = ents.get(id);
             if (e == null) continue;
 
