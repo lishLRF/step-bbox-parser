@@ -280,9 +280,11 @@ public class AssemblyTreeBuilder {
 
     private record Nauo(int parentPd, int childPd, Integer placement, Integer idt) {}
 
-    /** Build NAUO id → ITEM_DEFINED_TRANSFORMATION id, via the per-instance PDS. */
+    /** Build NAUO id → ITEM_DEFINED_TRANSFORMATION id, via the per-instance PDS
+     *  or via the CDSR → complex-entity → RRWT chain. */
     private static Map<Integer, Integer> indexNauoToIdt(Map<Integer, StepEntity> ents) {
         Map<Integer, Integer> out = new HashMap<>();
+        // Path A: PDS directly references an IDT (some exporters).
         for (StepEntity e : ents.values()) {
             if (!e.type().equals("PRODUCT_DEFINITION_SHAPE")) continue;
             StepEntity.Ref defRef = null;
@@ -292,10 +294,8 @@ public class AssemblyTreeBuilder {
                     StepEntity target = ents.get(r.id());
                     if (target != null && target.type().equals("ITEM_DEFINED_TRANSFORMATION")) {
                         idtRef = r;
-                    } else if (defRef == null) {
-                        defRef = r;
                     } else {
-                        defRef = r;  // last ref wins as the definition
+                        defRef = r;
                     }
                 }
             }
@@ -304,6 +304,58 @@ public class AssemblyTreeBuilder {
                 if (def != null && def.type().equals("NEXT_ASSEMBLY_USAGE_OCCURRENCE")) {
                     out.put(defRef.id(), idtRef.id());
                 }
+            }
+        }
+        // Path B: CDSR → arg0 (complex entity) → search for
+        // REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#idt) in raw args.
+        // CDSR → arg1 (PDS) → last ref = NAUO.
+        for (StepEntity cdsr : ents.values()) {
+            if (!cdsr.type().equals("CONTEXT_DEPENDENT_SHAPE_REPRESENTATION")) continue;
+            // arg0 = the representation relationship (may be a complex entity
+            // whose raw args contain "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#N)").
+            StepEntity.Ref repRelRef = cdsr.refAt(0);
+            StepEntity.Ref pdsRef = cdsr.refAt(1);
+            if (repRelRef == null || pdsRef == null) continue;
+            StepEntity repRel = ents.get(repRelRef.id());
+            StepEntity pds = ents.get(pdsRef.id());
+            if (repRel == null || pds == null) continue;
+            // Find the IDT reference in the representation relationship's args.
+            // It appears as a Ref inside an InlineList whose first item is the
+            // string 'REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION' — but in
+            // practice Creo stores it as a flat pattern in the raw tokenized
+            // args. We search all Refs in repRel.args() and check if any points
+            // at an ITEM_DEFINED_TRANSFORMATION.
+            Integer idtId = null;
+            for (Object a : repRel.args()) {
+                if (a instanceof StepEntity.Ref r) {
+                    StepEntity target = ents.get(r.id());
+                    if (target != null && target.type().equals("ITEM_DEFINED_TRANSFORMATION")) {
+                        idtId = r.id();
+                        break;
+                    }
+                } else if (a instanceof StepEntity.InlineList il) {
+                    for (Object item : il.items()) {
+                        if (item instanceof StepEntity.Ref r) {
+                            StepEntity target = ents.get(r.id());
+                            if (target != null && target.type().equals("ITEM_DEFINED_TRANSFORMATION")) {
+                                idtId = r.id();
+                                break;
+                            }
+                        }
+                    }
+                    if (idtId != null) break;
+                }
+            }
+            if (idtId == null) continue;
+            // Find the NAUO from the PDS: last Ref in PDS args.
+            StepEntity.Ref nauoRef = null;
+            for (Object a : pds.args()) {
+                if (a instanceof StepEntity.Ref r) nauoRef = r;
+            }
+            if (nauoRef == null) continue;
+            StepEntity nauo = ents.get(nauoRef.id());
+            if (nauo != null && nauo.type().equals("NEXT_ASSEMBLY_USAGE_OCCURRENCE")) {
+                out.putIfAbsent(nauoRef.id(), idtId);
             }
         }
         return out;

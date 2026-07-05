@@ -1,23 +1,43 @@
-import { useEffect, useState } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { useEffect, useState, useRef } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, GizmoHelper, GizmoViewport, Grid, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { useViewerStore } from '../store/viewerStore';
 import { api } from '../services/api';
 import type { BoundingBox, TreeNode } from '../types/model';
 
-/**
- * Center column: the whole-machine model rendered from real geometry. On mount
- * (and whenever the model id changes) we ask the backend for a tessellated GLB;
- * the first call is slow (OCCT tessellation of the full assembly). While it
- * generates we show a spinner overlay and a faint wireframe of the bboxes as a
- * spatial reference. Once the GLB arrives we render it with drei's useGLTF.
- */
+/** 自动缩放相机到模型范围 */
+function CameraAutoFit({ tree, controlsRef }: { tree: TreeNode | null; controlsRef: React.RefObject<any> }) {
+  const { camera } = useThree();
+  useEffect(() => {
+    if (!tree) return;
+    let mnX=Infinity,mnY=Infinity,mnZ=Infinity,mxX=-Infinity,mxY=-Infinity,mxZ=-Infinity;
+    let found=false;
+    const walk=(n:TreeNode)=>{
+      if(n.boundingBox){found=true;mnX=Math.min(mnX,n.boundingBox.min.x);mxX=Math.max(mxX,n.boundingBox.max.x);mnY=Math.min(mnY,n.boundingBox.min.y);mxY=Math.max(mxY,n.boundingBox.max.y);mnZ=Math.min(mnZ,n.boundingBox.min.z);mxZ=Math.max(mxZ,n.boundingBox.max.z);}
+      for(const c of n.children) walk(c);
+    };
+    walk(tree);
+    if(!found) return;
+    const cx=(mnX+mxX)/2,cy=(mnY+mxY)/2,cz=(mnZ+mxZ)/2;
+    const dx=mxX-mnX,dy=mxY-mnY,dz=mxZ-mnZ;
+    const r=Math.max(Math.sqrt(dx*dx+dy*dy+dz*dz)/2, 0.1);
+    const dist=r*2.8;
+    camera.position.set(cx+dist*0.7, cy+dist*0.5, cz+dist*0.7);
+    camera.lookAt(cx,cy,cz);
+    camera.near=r*0.001; camera.far=r*100; camera.updateProjectionMatrix();
+    if(controlsRef.current){controlsRef.current.target.set(cx,cy,cz);controlsRef.current.update();}
+  }, [tree, camera]);
+  return null;
+}
+
+/** 中栏：整机真实几何模型 */
 export function ModelViewer() {
   const { tree, metadata } = useViewerStore();
   const [glbUrl, setGlbUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const controlsRef = useRef<any>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,7 +46,7 @@ export function ModelViewer() {
     setLoading(true); setError(null); setGlbUrl(null);
     api.getMeshUrl(metadata.id)
       .then((u) => { if (cancelled) { URL.revokeObjectURL(u); return; } url = u; setGlbUrl(u); setLoading(false); })
-      .catch((e) => { if (cancelled) return; setError(e?.response?.data?.detail ?? String(e)); setLoading(false); });
+      .catch((e: any) => { if (cancelled) return; setError(e?.response?.data?.detail ?? String(e)); setLoading(false); });
     return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
   }, [metadata?.id]);
 
@@ -41,18 +61,18 @@ export function ModelViewer() {
 
   return (
     <div className="viewer">
-      <Canvas camera={{ position: [3, 2, 3], fov: 50 }} dpr={[1, 2]}>
+      <Canvas camera={{ position: [3, 2, 3], fov: 50, near: 0.01, far: 100000 }} dpr={[1, 2]}>
         <ambientLight intensity={0.8} />
         <directionalLight position={[5, 5, 5]} intensity={0.7} />
         <directionalLight position={[-5, 3, -5]} intensity={0.3} />
-        <Grid args={[20, 20]} cellSize={0.1} sectionSize={0.5} fadeDistance={15} infiniteGrid />
+        <Grid args={[100, 100]} cellSize={0.1} sectionSize={0.5} fadeDistance={200} infiniteGrid />
+        <CameraAutoFit tree={tree} controlsRef={controlsRef} />
         {glbUrl && <GltfModel url={glbUrl} />}
-        {/* While the mesh is generating, show faint bbox wireframes as a reference. */}
         {!glbUrl && boxes.map((b) => <WireCuboid key={b.id} box={b.box} />)}
         <GizmoHelper alignment="bottom-right" margin={[70, 70]}>
           <GizmoViewport labelColor="white" axisHeadScale={1} />
         </GizmoHelper>
-        <OrbitControls makeDefault />
+        <OrbitControls ref={controlsRef} makeDefault />
       </Canvas>
       <div className="viewer__overlay">
         {loading && (
@@ -70,9 +90,7 @@ export function ModelViewer() {
 
 function GltfModel({ url }: { url: string }) {
   const { scene } = useGLTF(url);
-  // Clone so per-instance material tweaks don't mutate the cached GLTF.
   const cloned = scene.clone(true);
-  // Apply a neutral metallic material if the GLB has none.
   cloned.traverse((obj) => {
     if ((obj as THREE.Mesh).isMesh) {
       const m = obj as THREE.Mesh;

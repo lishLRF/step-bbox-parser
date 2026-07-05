@@ -40,6 +40,16 @@ public class StepParser {
             Pattern.compile("#(\\d+)\\s*=\\s*([A-Z0-9_]+)\\s*\\(");
 
     /**
+     * Pattern for STEP "complex entities" (supertype conjunction):
+     * {@code #746=(TYPE1(...)TYPE2(...)TYPE3(...));}. Creo uses these for
+     * REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION. We capture the id and
+     * the first type, then store the full inner content so callers can search
+     * for sub-type patterns.
+     */
+    private static final Pattern COMPLEX_ENTITY_START =
+            Pattern.compile("#(\\d+)\\s*=\\s*\\(\\s*([A-Z0-9_]+)\\s*\\(");
+
+    /**
      * Parse a STEP stream into an indexed bag of entities plus a few facts
      * lifted from the {@code HEADER} section (source CAD system, schema, unit).
      */
@@ -81,7 +91,21 @@ public class StepParser {
                         // balanced parens but no terminator from a true one-liner.
                         if (curId == null) {
                             Matcher m = ENTITY_START.matcher(line);
-                            if (m.find()) {
+                            Matcher cm = COMPLEX_ENTITY_START.matcher(line);
+                            if (cm.find()) {
+                                // Complex entity: #id=(TYPE1(...)TYPE2(...)...);
+                                curId = Integer.parseInt(cm.group(1));
+                                curType = cm.group(2);
+                                // Keep the full inner content (starting from first TYPE)
+                                int eqParen = line.indexOf("=(");
+                                String after = line.substring(eqParen + 2); // skip "=( "
+                                buf.append(after);
+                                depth = parenDelta(after);
+                                if (depth <= 0 && after.trim().endsWith(";")) {
+                                    flush(entities, curId, curType, buf);
+                                    curId = null; buf.setLength(0); depth = 0;
+                                }
+                            } else if (m.find()) {
                                 curId = Integer.parseInt(m.group(1));
                                 curType = m.group(2);
                                 String after = line.substring(m.end());

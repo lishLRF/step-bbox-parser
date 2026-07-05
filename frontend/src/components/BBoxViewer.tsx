@@ -1,20 +1,62 @@
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, GizmoHelper, GizmoViewport, Grid } from '@react-three/drei';
 import * as THREE from 'three';
+import { useEffect, useRef } from 'react';
 import { useViewerStore } from '../store/viewerStore';
 import type { BoundingBox, TreeNode } from '../types/model';
 
-/**
- * Right column: bounding-box skeleton. Renders every part's AABB as either a
- * solid (grouped-colored) cuboid or a wireframe, per the user's toggle.
- * Parts sharing the same immediate sub-assembly parent share a hue so the
- * assembly structure is visually readable.
- */
+/** 计算整棵树的包围球，用于自动缩放相机 */
+function computeOverallBounds(tree: TreeNode): { center: [number,number,number]; radius: number } | null {
+  let mnX=Infinity,mnY=Infinity,mnZ=Infinity,mxX=-Infinity,mxY=-Infinity,mxZ=-Infinity;
+  let found=false;
+  const walk=(n:TreeNode)=>{
+    if(n.boundingBox){
+      found=true;
+      mnX=Math.min(mnX,n.boundingBox.min.x);mxX=Math.max(mxX,n.boundingBox.max.x);
+      mnY=Math.min(mnY,n.boundingBox.min.y);mxY=Math.max(mxY,n.boundingBox.max.y);
+      mnZ=Math.min(mnZ,n.boundingBox.min.z);mxZ=Math.max(mxZ,n.boundingBox.max.z);
+    }
+    for(const c of n.children) walk(c);
+  };
+  walk(tree);
+  if(!found) return null;
+  const cx=(mnX+mxX)/2, cy=(mnY+mxY)/2, cz=(mnZ+mxZ)/2;
+  // 包围球半径 = 对角线的一半
+  const dx=mxX-mnX, dy=mxY-mnY, dz=mxZ-mnZ;
+  const radius = Math.sqrt(dx*dx+dy*dy+dz*dz)/2;
+  return { center:[cx,cy,cz], radius: Math.max(radius, 0.1) };
+}
+
+/** 自动缩放相机到模型范围 */
+function CameraAutoFit({ tree, controlsRef }: { tree: TreeNode | null; controlsRef: React.RefObject<any> }) {
+  const { camera } = useThree();
+  useEffect(() => {
+    if (!tree) return;
+    const bounds = computeOverallBounds(tree);
+    if (!bounds) return;
+    const [cx, cy, cz] = bounds.center;
+    const r = bounds.radius;
+    // 相机放在包围球对角线方向，距离 = 半径 * 2.5
+    const dist = r * 2.8;
+    camera.position.set(cx + dist*0.7, cy + dist*0.5, cz + dist*0.7);
+    camera.lookAt(cx, cy, cz);
+    camera.near = r * 0.001;   // 避免近距离裁剪
+    camera.far = r * 100;      // 避免远距离裁剪
+    camera.updateProjectionMatrix();
+    if (controlsRef.current) {
+      controlsRef.current.target.set(cx, cy, cz);
+      controlsRef.current.update();
+    }
+  }, [tree, camera]);
+  return null;
+}
+
+/** 右栏：包围盒骨架，分组着色，可切换线框/实心 */
 export function BBoxViewer() {
   const { tree, selectedId, multiSelected, displayMode, bboxStyle } = useViewerStore();
+  const controlsRef = useRef<any>(null);
   if (!tree) return <div className="viewer viewer--empty">上传模型后显示包围盒骨架。</div>;
 
-  // Assign each node a color keyed by its parent's id (siblings share a hue).
   const colorByParent = new Map<string, string>();
   const palette = makePalette();
   const boxes: { id: string; box: BoundingBox; color: string; isMerge: boolean }[] = [];
@@ -23,9 +65,7 @@ export function BBoxViewer() {
     const isMerge = node.id.startsWith('merge-');
     let groupKey = parentKey;
     if (displayMode === 'leaf' && (node.type === 'ASSEMBLY' || node.type === 'SUBASSEMBLY') && !isMerge) {
-      // skip non-leaf assemblies in leaf mode
     } else if (displayMode === 'subtree' && selectedId && !isInSubtree(node, selectedId)) {
-      // skip nodes outside selected subtree
     } else if (node.boundingBox) {
       if (!colorByParent.has(groupKey)) {
         colorByParent.set(groupKey, palette[paletteIdx % palette.length]);
@@ -39,11 +79,12 @@ export function BBoxViewer() {
 
   return (
     <div className="viewer">
-      <Canvas camera={{ position: [3, 2, 3], fov: 50 }} dpr={[1, 2]}>
+      <Canvas camera={{ position: [3, 2, 3], fov: 50, near: 0.01, far: 100000 }} dpr={[1, 2]}>
         <ambientLight intensity={0.7} />
         <directionalLight position={[5, 5, 5]} intensity={0.7} />
         <directionalLight position={[-5, 3, -5]} intensity={0.3} />
-        <Grid args={[20, 20]} cellSize={0.1} sectionSize={0.5} fadeDistance={15} infiniteGrid />
+        <Grid args={[100, 100]} cellSize={0.1} sectionSize={0.5} fadeDistance={200} infiniteGrid />
+        <CameraAutoFit tree={tree} controlsRef={controlsRef} />
         {boxes.map((b) => (
           <Cuboid
             key={b.id}
@@ -57,7 +98,7 @@ export function BBoxViewer() {
         <GizmoHelper alignment="bottom-right" margin={[70, 70]}>
           <GizmoViewport labelColor="white" axisHeadScale={1} />
         </GizmoHelper>
-        <OrbitControls makeDefault />
+        <OrbitControls ref={controlsRef} makeDefault />
       </Canvas>
     </div>
   );
@@ -83,13 +124,7 @@ function Cuboid({ box, color, solid, dim, highlighted }: {
       {solid && (
         <mesh>
           <boxGeometry args={[sx, sy, sz]} />
-          <meshStandardMaterial
-            color={color}
-            transparent
-            opacity={fillOpacity}
-            roughness={0.6}
-            metalness={0.1}
-          />
+          <meshStandardMaterial color={color} transparent opacity={fillOpacity} roughness={0.6} metalness={0.1} />
         </mesh>
       )}
     </group>
@@ -101,11 +136,10 @@ function isInSubtree(node: TreeNode, target: string): boolean {
   return node.children.some((c) => isInSubtree(c, target));
 }
 
-/** A spread of distinct, saturated hues for grouping sibling parts. */
 function makePalette(): string[] {
   const hues = [];
   for (let i = 0; i < 24; i++) {
-    const h = Math.round((i * 137.5) % 360); // golden-angle spread
+    const h = Math.round((i * 137.5) % 360);
     hues.push(hslToHex(h, 65, 55));
   }
   return hues;
