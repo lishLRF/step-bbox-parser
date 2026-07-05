@@ -59,6 +59,14 @@ export const api = {
     return data;
   },
 
+  /** Fetch the tessellated GLB for the whole-machine model view. May take a
+   *  long time on first call (OCCT tessellation); the caller should show a
+   *  loading indicator. */
+  async getMeshUrl(modelId: string): Promise<string> {
+    const { data } = await http.get<Blob>(`/models/${modelId}/mesh`, { responseType: 'blob' });
+    return URL.createObjectURL(data);
+  },
+
   async delete(modelId: string): Promise<void> {
     await http.delete(`/models/${modelId}`);
   },

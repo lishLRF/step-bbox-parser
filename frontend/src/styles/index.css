@@ -55,6 +55,15 @@ h2:first-child { margin-top: 0; }
   text-align: center; pointer-events: none;
 }
 .viewer__banner-sub { display: block; color: var(--fg-dim); font-size: 10px; margin-top: 1px; }
+.viewer__overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; }
+.viewer__banner--err { background: rgba(255,107,107,0.12); border-color: var(--danger); color: var(--danger); }
+.viewer__banner--ok { background: rgba(74,168,255,0.08); }
+.spinner {
+  display: inline-block; width: 12px; height: 12px; margin-right: 6px;
+  border: 2px solid var(--accent-dim); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* uploader */
 .dropzone {

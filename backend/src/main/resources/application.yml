@@ -16,6 +16,13 @@ parser:
   upload-dir: ${java.io.tmpdir}/step-bbox-parser/uploads
   work-dir: ${java.io.tmpdir}/step-bbox-parser/work
 
+# Mesh generation (cadquery + trimesh under a dedicated conda env). The python
+# interpreter path points at the env created at Z:\conda_envs\step-mesh; override
+# via MESH_PYTHON_EXE if the env lives elsewhere.
+mesh:
+  python-exe: ${MESH_PYTHON_EXE:Z:/conda_envs/step-mesh/python.exe}
+  script: ${MESH_SCRIPT:scripts/step_to_mesh.py}
+
 management:
   endpoints:
     web:

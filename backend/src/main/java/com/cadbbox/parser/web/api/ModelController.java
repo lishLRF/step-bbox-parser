@@ -38,10 +38,13 @@ public class ModelController {
 
     private final ModelService service;
     private final StepExporter stepExporter;
+    private final com.cadbbox.parser.web.MeshService meshService;
 
-    public ModelController(ModelService service, StepExporter stepExporter) {
+    public ModelController(ModelService service, StepExporter stepExporter,
+                           com.cadbbox.parser.web.MeshService meshService) {
         this.service = service;
         this.stepExporter = stepExporter;
+        this.meshService = meshService;
     }
 
     @PostMapping("/upload")
@@ -115,6 +118,17 @@ public class ModelController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"skeleton.stp\"")
                 .contentType(MediaType.parseMediaType("application/step"))
                 .body(bytes);
+    }
+
+    // ---- Real-geometry mesh (cadquery/trimesh → GLB) ----
+    @GetMapping("/{id}/mesh")
+    public ResponseEntity<byte[]> mesh(@PathVariable String id) throws IOException, InterruptedException {
+        com.cadbbox.parser.web.ParsedModel model = service.requirePublic(id);
+        byte[] glb = meshService.getOrGenerate(id, model.sourceStep());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"model.glb\"")
+                .contentType(MediaType.parseMediaType("model/gltf-binary"))
+                .body(glb);
     }
 
     // ---- error mapping (RFC 9457 problem+json) ----

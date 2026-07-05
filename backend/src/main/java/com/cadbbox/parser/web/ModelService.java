@@ -17,6 +17,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -43,16 +46,21 @@ public class ModelService {
     private final BoundingBoxCalculator bboxCalc;
     private final BboxIndexer bboxIndexer;
     private final AnnotationStore annotations;
+    private final Path uploadDir;
     private final Map<String, ParsedModel> store = new ConcurrentHashMap<>();
 
     public ModelService(StepParser parser, AssemblyTreeBuilder treeBuilder,
                         BoundingBoxCalculator bboxCalc, BboxIndexer bboxIndexer,
-                        AnnotationStore annotations) {
+                        AnnotationStore annotations,
+                        @org.springframework.beans.factory.annotation.Value("${parser.upload-dir:#{T(java.lang.System).getProperty('java.io.tmpdir')} }") String uploadDir)
+            throws IOException {
         this.parser = parser;
         this.treeBuilder = treeBuilder;
         this.bboxCalc = bboxCalc;
         this.bboxIndexer = bboxIndexer;
         this.annotations = annotations;
+        this.uploadDir = Paths.get(uploadDir);
+        Files.createDirectories(this.uploadDir);
     }
 
     public ModelMetadata upload(MultipartFile file) throws IOException {
@@ -75,7 +83,10 @@ public class ModelService {
         // Build the per-product AABB index once (the expensive pass); reuse forever.
         Map<Integer, BoundingBox> productBboxes = bboxIndexer.index(parsed);
         String id = UUID.randomUUID().toString();
-        store.put(id, new ParsedModel(id, file.getOriginalFilename(), parsed, roots, productBboxes));
+        // Persist the uploaded STEP so the mesh generator can read it later.
+        Path saved = uploadDir.resolve(id + ".stp");
+        file.transferTo(saved.toFile());
+        store.put(id, new ParsedModel(id, file.getOriginalFilename(), parsed, roots, productBboxes, saved));
         return metadata(id, parsed, file.getOriginalFilename(), roots);
     }
 
@@ -168,6 +179,11 @@ public class ModelService {
     public ModelMetadata metadata(String id) {
         ParsedModel m = require(id);
         return metadata(id, m.parsed(), m.fileName(), m.roots());
+    }
+
+    /** Public accessor for cross-service use (e.g. MeshService needs the source path). */
+    public ParsedModel requirePublic(String id) {
+        return require(id);
     }
 
     public void delete(String id) {
