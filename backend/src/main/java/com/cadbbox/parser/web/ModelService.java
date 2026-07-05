@@ -339,16 +339,32 @@ public class ModelService {
                     jsonOut.toAbsolutePath().toString());
             pb.redirectErrorStream(true);
             Process p = pb.start();
+            // No timeout — some large machine models take >30 min. Instead we
+            // log a heartbeat every 30s so the user can confirm it's alive.
+            Thread heartbeat = new Thread(() -> {
+                int sec = 0;
+                while (p.isAlive()) {
+                    try { Thread.sleep(30_000); } catch (InterruptedException e) { return; }
+                    sec += 30;
+                    System.out.printf("[bbox] still running... %ds elapsed (pid=%d)%n", sec, p.pid());
+                }
+            }, "bbox-heartbeat-" + modelId);
+            heartbeat.setDaemon(true);
+            heartbeat.start();
+            // Stream output for diagnostics.
             StringBuilder log = new StringBuilder();
             try (var r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
                 String line;
                 while ((line = r.readLine()) != null) log.append(line).append('\n');
             }
-            boolean done = p.waitFor(30, java.util.concurrent.TimeUnit.MINUTES);
-            if (!done || p.exitValue() != 0) {
-                System.err.println("[bbox] OCCT converter failed: " + log);
+            // Infinite wait — no timeout.
+            p.waitFor();
+            heartbeat.interrupt();
+            if (p.exitValue() != 0) {
+                System.err.println("[bbox] OCCT converter failed (exit " + p.exitValue() + "): " + log);
                 return Map.of();
             }
+            System.out.println("[bbox] done: " + log.toString().trim());
             return parseBboxJson(jsonOut);
         } catch (Exception e) {
             System.err.println("[bbox] OCCT converter error: " + e.getMessage());

@@ -3,7 +3,7 @@ import type { ModelMetadata, ParsedModel, TreeNode } from '../types/model';
 
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE ?? '/api',
-  timeout: 120_000,
+  timeout: 0, // no timeout — large models may take very long to parse
 });
 
 export const api = {

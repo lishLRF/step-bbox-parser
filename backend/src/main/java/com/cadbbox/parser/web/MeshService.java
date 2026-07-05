@@ -86,17 +86,26 @@ public class MeshService {
                 outGlb.toAbsolutePath().toString());
         pb.redirectErrorStream(true);
         Process p = pb.start();
+        // Heartbeat: no timeout, but log every 30s so the user knows it's alive.
+        Thread heartbeat = new Thread(() -> {
+            int sec = 0;
+            while (p.isAlive()) {
+                try { Thread.sleep(30_000); } catch (InterruptedException e) { return; }
+                sec += 30;
+                System.out.printf("[mesh] still generating... %ds elapsed (pid=%d)%n", sec, p.pid());
+            }
+        }, "mesh-heartbeat");
+        heartbeat.setDaemon(true);
+        heartbeat.start();
         // Stream the converter's stdout/stderr so we can diagnose failures.
         StringBuilder log = new StringBuilder();
         try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
             String line;
             while ((line = r.readLine()) != null) log.append(line).append('\n');
         }
-        boolean finished = p.waitFor(30, TimeUnit.MINUTES);
-        if (!finished) {
-            p.destroyForcibly();
-            throw new IOException("Mesh generation timed out after 30 minutes.\n" + log);
-        }
+        // Infinite wait — no timeout. Large models may take hours.
+        p.waitFor();
+        heartbeat.interrupt();
         if (p.exitValue() != 0) {
             throw new IOException("Mesh generation failed (exit " + p.exitValue() + ").\n" + log);
         }
