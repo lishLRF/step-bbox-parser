@@ -7,15 +7,20 @@ const http = axios.create({
 });
 
 export const api = {
-  async uploadStep(file: File, onProgress?: (pct: number) => void): Promise<ModelMetadata> {
+  async uploadStep(file: File, displayName: string, onProgress?: (pct: number) => void): Promise<ModelMetadata> {
     const form = new FormData();
     form.append('file', file);
+    if (displayName) form.append('displayName', displayName);
     const { data } = await http.post<ModelMetadata>('/models/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (e) =>
         onProgress?.(e.total ? Math.round((e.loaded * 100) / e.total) : 0),
     });
     return data;
+  },
+
+  async renameModel(modelId: string, newName: string): Promise<void> {
+    await http.patch(`/models/${modelId}/rename-model`, { name: newName });
   },
 
   async getTree(modelId: string): Promise<TreeNode> {

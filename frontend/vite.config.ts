@@ -1,38 +1,34 @@
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import { readFileSync } from 'node:fs';
+import react from '@vite/js/plugin-react';
+import { readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 /**
- * Read the backend's chosen port from its `.port` file (written by PortPublisher
- * on startup). Falls back to 8080 if the file is missing (e.g. backend not started
- * yet) so the dev server still boots — requests will just 502 until the backend is up.
- *
- * The .port file lives under <work-dir>/step-bbox-parser/.port, where work-dir
- * resolves to java.io.tmpdir on the backend host. For a local dev workflow we
- * check both the OS tmpdir and a couple of common locations.
+ * Read the backend's chosen port from its `.port` file.
+ * The .port file is at <project-root>/.cache/work/.port (relative, portable).
+ * Also checks STEP_BBOX_CACHE_DIR env var and legacy temp locations.
  */
 function readBackendPort(): number {
+  // Project root = parent of frontend/
+  const projRoot = resolve(__dirname, '..');
   const candidates = [
     process.env.STEP_BBOX_BACKEND_PORT,
-    process.env.STEP_BBOX_WORK_DIR && join(process.env.STEP_BBOX_WORK_DIR, '.port'),
-    // Match application.yml: Z:/Project/3Dbox-step/cache/work/.port
-    join('Z:', 'Project', '3Dbox-step', 'cache', 'work', '.port'),
-    // Legacy C: temp location.
-    join(tmpdir(), 'step-bbox-parser', 'work', '.port'),
+    process.env.STEP_BBOX_CACHE_DIR && join(process.env.STEP_BBOX_CACHE_DIR, 'work', '.port'),
+    join(projRoot, '.cache', 'work', '.port'),
+    join(tmpdir(), 'step-bbox-parser', 'work', '.port'), // legacy
   ].filter(Boolean) as string[];
 
   for (const c of candidates) {
-    // STEP_BBOX_BACKEND_PORT can be a bare port number
     if (/^\d+$/.test(c)) return Number(c);
     try {
+      if (!existsSync(c)) continue;
       const txt = readFileSync(c, 'utf8').trim();
       const port = Number(txt.split(/\s+/)[0]);
       if (Number.isInteger(port) && port > 0) return port;
-    } catch { /* file not present, try next */ }
+    } catch { /* try next */ }
   }
-  return 0; // 0 = let the proxy target fail loudly until the backend advertises.
+  return 0;
 }
 
 const backendPort = readBackendPort();
@@ -41,7 +37,6 @@ console.log(`[vite] proxying /api → http://localhost:${backendPort}`);
 export default defineConfig({
   plugins: [react()],
   server: {
-    // 0 = let Vite/Node pick a free port. strictPort:false lets it walk up if needed.
     port: 0,
     strictPort: false,
     proxy: {

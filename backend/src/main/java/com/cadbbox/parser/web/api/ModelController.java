@@ -48,9 +48,17 @@ public class ModelController {
     }
 
     @PostMapping("/upload")
-    public ResponseEntity<ModelMetadata> upload(@RequestParam("file") MultipartFile file) throws IOException {
-        ModelMetadata meta = service.upload(file);
+    public ResponseEntity<ModelMetadata> upload(@RequestParam("file") MultipartFile file,
+                                                 @RequestParam(value = "displayName", required = false) String displayName) throws IOException {
+        ModelMetadata meta = service.upload(file, displayName);
         return ResponseEntity.ok(meta);
+    }
+
+    // ---- Rename a model (user-friendly name for the cache list) ----
+    @PatchMapping("/{id}/rename-model")
+    public ResponseEntity<Void> renameModel(@PathVariable String id, @RequestBody java.util.Map<String, String> body) throws IOException {
+        service.renameModel(id, body.get("name"));
+        return ResponseEntity.noContent().build();
     }
 
     // ---- List cached models (previously parsed) ----

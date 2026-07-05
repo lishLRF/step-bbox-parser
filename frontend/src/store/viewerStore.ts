@@ -22,7 +22,7 @@ interface ViewerState {
   bboxStyle: BBoxStyle;
   expanded: Set<string>;
 
-  upload: (file: File) => Promise<void>;
+  upload: (file: File, displayName?: string) => Promise<void>;
   loadCachedModel: (modelId: string) => Promise<void>;
   loadTree: (modelId: string) => Promise<void>;
   watchBboxProgress: (modelId: string) => void;
@@ -55,10 +55,10 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   bboxStyle: 'solid',
   expanded: new Set<string>(),
 
-  upload: async (file: File) => {
+  upload: async (file: File, displayName?: string) => {
     set({ uploading: true, uploadProgress: 0, bboxProgress: null, error: null, tree: null, metadata: null });
     try {
-      const meta = await api.uploadStep(file, (pct) => set({ uploadProgress: pct }));
+      const meta = await api.uploadStep(file, displayName || file.name, (pct) => set({ uploadProgress: pct }));
       set({ metadata: meta, uploading: false });
       // Watch bbox progress via SSE.
       get().watchBboxProgress(meta.id);

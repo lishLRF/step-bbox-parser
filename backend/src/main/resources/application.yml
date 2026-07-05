@@ -6,18 +6,21 @@ spring:
       max-file-size: 500MB
       max-request-size: 500MB
 
-# 0 = let the OS pick a free port from the dynamic range (49152-65535 on Windows).
-# The actually-assigned port is written to <work-dir>/.port at startup
-# (see PortPublisher) so the frontend dev server / launcher can find it.
+# 0 = let the OS pick a free port from the dynamic range.
 server:
   port: 0
 
+# Cache dirs are RELATIVE to the working directory (the project root when
+# launched via dev.mjs). Override with STEP_BBOX_CACHE_DIR env var for a
+# custom absolute path. No hardcoded drive letters → fully portable.
 parser:
-  upload-dir: Z:/Project/3Dbox-step/cache/uploads
-  work-dir: Z:/Project/3Dbox-step/cache/work
+  upload-dir: ${STEP_BBOX_CACHE_DIR:./.cache}/uploads
+  work-dir: ${STEP_BBOX_CACHE_DIR:./.cache}/work
 
 mesh:
-  python-exe: ${MESH_PYTHON_EXE:Z:/conda_envs/step-mesh/python.exe}
+  # Python exe: auto-detect from common conda env locations, or override
+  # via MESH_PYTHON_EXE env var.
+  python-exe: ${MESH_PYTHON_EXE:}
   script: ${MESH_SCRIPT:scripts/step_to_mesh.py}
   bbox-script: ${MESH_BBOX_SCRIPT:scripts/step_to_bbox.py}
 

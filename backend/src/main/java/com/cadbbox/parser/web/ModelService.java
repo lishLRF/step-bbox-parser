@@ -85,7 +85,7 @@ public class ModelService {
         Files.createDirectories(this.bboxCacheDir);
     }
 
-    public ModelMetadata upload(MultipartFile file) throws IOException {
+    public ModelMetadata upload(MultipartFile file, String displayName) throws IOException {
         validate(file);
         StepParser.ParsedStepFile parsed;
         try {
@@ -226,8 +226,38 @@ public class ModelService {
         return metadata(id, m.parsed(), m.fileName(), m.roots());
     }
 
-    /** List all cached models (previously uploaded + parsed). Returns metadata
-     *  for each so the frontend can show a "load" button without re-parsing. */
+    /** Rename a cached model (user-friendly display name). */
+    public void renameModel(String modelId, String newName) throws IOException {
+        Path namesFile = uploadDir.resolve("..").resolve("model-names.json").normalize();
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        java.util.Map<String, String> names = new java.util.HashMap<>();
+        if (Files.exists(namesFile)) {
+            try { names = mapper.readValue(namesFile.toFile(), java.util.Map.class); } catch (Exception ignored) {}
+        }
+        names.put(modelId, newName);
+        mapper.writerWithDefaultPrettyPrinter().writeValue(namesFile.toFile(), names);
+        // Also update in-memory if loaded.
+        ParsedModel m = store.get(modelId);
+        if (m != null) {
+            store.put(modelId, new ParsedModel(modelId, newName, m.parsed(), m.roots(), m.productBboxes(), m.sourceStep(), m.occtBboxes()));
+        }
+    }
+
+    /** Get the user-friendly name for a cached model. */
+    private String getModelName(String modelId, String fallback) {
+        Path namesFile = uploadDir.resolve("..").resolve("model-names.json").normalize();
+        if (Files.exists(namesFile)) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                java.util.Map<String, String> names = mapper.readValue(namesFile.toFile(), java.util.Map.class);
+                String name = names.get(modelId);
+                if (name != null) return name;
+            } catch (Exception ignored) {}
+        }
+        return fallback;
+    }
+
+    /** List all cached models with user-friendly names. */
     public List<Map<String, Object>> listCachedModels() {
         List<Map<String, Object>> result = new java.util.ArrayList<>();
         File[] stpFiles = uploadDir.toFile().listFiles((d, name) -> name.endsWith(".stp"));
@@ -241,6 +271,7 @@ public class ModelService {
             if (!hasBbox) continue; // not fully parsed yet
             Map<String, Object> entry = new java.util.LinkedHashMap<>();
             entry.put("id", id);
+            entry.put("name", getModelName(id, "未命名-" + id.substring(0, 8)));
             entry.put("stpSize", stp.length());
             entry.put("parsedAt", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm")
                     .format(new java.util.Date(stp.lastModified())));
@@ -283,7 +314,7 @@ public class ModelService {
             List<AssemblyNode> roots = treeBuilder.build(parsed);
             Map<Integer, BoundingBox> productBboxes = bboxIndexer.index(parsed);
             Map<String, double[]> occtBboxes = parseBboxJson(bboxCacheDir.resolve(id + "_bbox.json"));
-            String fileName = "cached-" + id.substring(0, 8);
+            String fileName = getModelName(id, "cached-" + id.substring(0, 8));
             store.put(id, new ParsedModel(id, fileName, parsed, roots, productBboxes, stpFile, occtBboxes));
             return metadata(id, parsed, fileName, roots);
         } catch (Exception e) {

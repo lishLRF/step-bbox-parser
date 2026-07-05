@@ -102,6 +102,17 @@ h2:first-child { margin-top: 0; }
 .cached-models__mesh { color: var(--accent); margin-left: 6px; font-size: 10px; }
 .cached-models__meta { font-size: 10px; color: var(--fg-dim); margin-top: 2px; }
 .btn--sm { font-size: 10px; padding: 2px 6px; }
+.btn--primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.uploader__confirm { padding: 8px 4px; }
+.uploader__filename { font-size: 12px; margin-bottom: 6px; word-break: break-all; }
+.uploader__name-input {
+  width: 100%; box-sizing: border-box; padding: 5px 8px; margin-bottom: 8px;
+  background: var(--bg); border: 1px solid var(--accent); color: var(--fg);
+  border-radius: 4px; font-size: 12px;
+}
+.uploader__buttons { display: flex; gap: 6px; }
+.cached-models__rename { cursor: pointer; opacity: 0.5; margin-left: 4px; font-size: 10px; }
+.cached-models__rename:hover { opacity: 1; }
 
 /* toolbar */
 .toolbar { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }

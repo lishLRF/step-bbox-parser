@@ -42,14 +42,15 @@ function candidateTempDirs() {
   return [...new Set(dirs)];
 }
 
-// Match the path the backend writes (see application.yml + PortPublisher):
-// <cache-dir>/work/.port where cache-dir = Z:/Project/3Dbox-step/cache.
-// Also check legacy C: temp locations for backward compat.
+// The backend writes .port to <cache-dir>/work/.port. The cache dir defaults
+// to ./.cache relative to the project root (see application.yml). No hardcoded
+// drive letters — fully portable.
 function candidatePortFiles() {
   return [
-    join('Z:', 'Project', '3Dbox-step', 'cache', 'work', '.port'),
+    join(root, '.cache', 'work', '.port'),
+    join(process.env.STEP_BBOX_CACHE_DIR || '', 'work', '.port'),
     ...candidateTempDirs().map((d) => join(d, 'step-bbox-parser', 'work', '.port')),
-  ];
+  ].filter(Boolean);
 }
 let portFile = candidatePortFiles()[0];
 

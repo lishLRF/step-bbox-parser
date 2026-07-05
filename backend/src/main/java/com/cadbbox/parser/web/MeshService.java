@@ -33,10 +33,11 @@ public class MeshService {
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
 
     public MeshService(@Value("${parser.work-dir:#{T(java.lang.System).getProperty('java.io.tmpdir')} }") String workDir,
-                       @Value("${mesh.python-exe:python}") String pythonExe,
+                       @Value("${mesh.python-exe:}") String pythonExe,
                        @Value("${mesh.script:scripts/step_to_mesh.py}") String script) {
         this.meshCacheDir = Paths.get(workDir, "step-bbox-meshes");
-        this.pythonExe = pythonExe;
+        // Auto-detect python exe if not configured.
+        this.pythonExe = resolvePythonExe(pythonExe);
         // The script path is relative to the project root, but the jar may be
         // launched from backend/. Resolve to absolute, walking up to find it.
         Path sp = Paths.get(script);
@@ -57,6 +58,23 @@ public class MeshService {
         }
         this.scriptPath = sp;
         try { Files.createDirectories(meshCacheDir); } catch (IOException ignored) { }
+    }
+
+    /** Auto-detect the conda env's python.exe from common locations. */
+    private static String resolvePythonExe(String configured) {
+        if (configured != null && !configured.isBlank() && Files.exists(Paths.get(configured))) {
+            return configured;
+        }
+        // Search common conda env locations.
+        String[] candidates = {
+            "Z:/conda_envs/step-mesh/python.exe",
+            System.getenv("CONDA_PREFIX") != null ? System.getenv("CONDA_PREFIX") + "/envs/step-mesh/python.exe" : null,
+            "python", // fallback to PATH
+        };
+        for (String c : candidates) {
+            if (c != null && !c.equals("python") && Files.exists(Paths.get(c))) return c;
+        }
+        return "python";
     }
 
     /** Generate (or return cached) GLB bytes for the given model. */
