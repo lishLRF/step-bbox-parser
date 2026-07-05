@@ -81,16 +81,10 @@ public class AppSettings {
         }
     }
 
-    /** Default cache dir: sibling of Software/ → ../cache from backend/. */
+    /** Default cache dir: .cache under the working directory (Software/). */
     private static String defaultCacheDir() {
-        // backend/ is the jar's working dir; project root is its parent.
         String cwd = System.getProperty("user.dir");
-        Path softwareRoot = Paths.get(cwd).getParent(); // Software/
-        if (softwareRoot != null) {
-            Path cacheSibling = softwareRoot.resolveSibling("cache");
-            return cacheSibling.toAbsolutePath().toString().replace('\\', '/');
-        }
-        return "./cache";
+        return Paths.get(cwd, ".cache").toAbsolutePath().toString().replace('\\', '/');
     }
 
     /** Config file lives at Software/config.json (sibling of backend/). */

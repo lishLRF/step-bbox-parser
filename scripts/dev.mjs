@@ -42,27 +42,11 @@ function candidateTempDirs() {
   return [...new Set(dirs)];
 }
 
-// The backend writes .port to <cache-dir>/work/.port. The cache dir is
-// configured in Software/config.json (editable from the frontend). Default
-// is ../cache relative to Software/ (sibling directory).
-// We read config.json to find the actual cache dir, then look for .port there.
-function readCacheDirFromConfig() {
-  const configFile = join(root, 'config.json');
-  try {
-    const raw = readFileSync(configFile, 'utf8');
-    const cfg = JSON.parse(raw);
-    if (cfg.cacheDir) return cfg.cacheDir;
-  } catch {}
-  // Default: sibling of Software/
-  return join(root, '..', 'cache');
-}
-
+// .port is at <root>/.cache/work/.port (backend runs with cwd=root).
 function candidatePortFiles() {
-  const cacheDir = readCacheDirFromConfig();
   return [
-    join(cacheDir, 'work', '.port'),
-    join(process.env.STEP_BBOX_CACHE_DIR || '', 'work', '.port'),
-  ].filter(Boolean);
+    join(root, '.cache', 'work', '.port'),
+  ];
 }
 let portFile = candidatePortFiles()[0];
 
@@ -97,8 +81,10 @@ if (needsBuild) {
     { cwd: backend, shell: isWin, stdio: 'inherit' });
   if (build.status !== 0) { log('dev', 'backend build failed'); process.exit(1); }
 }
+// Run java -jar from the project ROOT (Software/) so that relative cache
+// paths (.cache/) resolve correctly under Software/.cache/.
 const be = spawn('java', ['-jar', jarPath],
-    { cwd: backend, shell: false, stdio: 'inherit' });
+    { cwd: root, shell: false, stdio: 'inherit' });
 
 // Wait for any of the candidate .port files to appear (max 60s).
 const deadline = Date.now() + 60_000;

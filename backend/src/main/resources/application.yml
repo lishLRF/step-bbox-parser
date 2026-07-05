@@ -9,12 +9,11 @@ spring:
 server:
   port: 0
 
-# These are FALLBACK values only. The actual cache dir and python exe are
-# managed by AppSettings (config.json) and injected at runtime. Override
-# via env vars only for headless/CI use.
+# Cache dir defaults to .cache/ under the project root (Software/.cache/).
+# Editable from the frontend settings panel (saved to Software/config.json).
 parser:
-  upload-dir: ${STEP_BBOX_CACHE_DIR:../cache}/uploads
-  work-dir: ${STEP_BBOX_CACHE_DIR:../cache}/work
+  upload-dir: ${STEP_BBOX_CACHE_DIR:.cache}/uploads
+  work-dir: ${STEP_BBOX_CACHE_DIR:.cache}/work
 
 mesh:
   python-exe: ${MESH_PYTHON_EXE:}

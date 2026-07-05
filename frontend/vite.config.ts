@@ -4,22 +4,11 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 /**
- * Read the backend port from <cache-dir>/work/.port.
- * Cache dir is configured in Software/config.json (editable from frontend).
+ * Read backend port from <project-root>/.cache/work/.port
  */
 function readBackendPort(): number {
   const projRoot = resolve(__dirname, '..');
-  // Try config.json first.
-  let cacheDir = join(projRoot, '..', 'cache'); // default: sibling of Software/
-  try {
-    const configFile = join(projRoot, 'config.json');
-    if (existsSync(configFile)) {
-      const cfg = JSON.parse(readFileSync(configFile, 'utf8'));
-      if (cfg.cacheDir) cacheDir = cfg.cacheDir;
-    }
-  } catch {}
-
-  const portFile = join(cacheDir, 'work', '.port');
+  const portFile = join(projRoot, '.cache', 'work', '.port');
   try {
     if (existsSync(portFile)) {
       const txt = readFileSync(portFile, 'utf8').trim();

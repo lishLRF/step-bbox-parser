@@ -59,9 +59,11 @@ temp/
 # ---- Build caches ----
 *.bincache
 
-# ---- Runtime uploaded files (keep dir, ignore contents) ----
+# ---- Runtime cache (uploads, bbox JSON, GLB meshes, .port) ----
+.cache/
 backend/uploads/
 backend/work/
+config.json
 .cache/
 Z:/Project/3Dbox-step/cache/
 
