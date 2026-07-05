@@ -7,18 +7,15 @@ spring:
       max-request-size: 500MB
 
 # 0 = let the OS pick a free port from the dynamic range (49152-65535 on Windows).
-# The actually-assigned port is written to <work-dir>/step-bbox-parser/.port at startup
+# The actually-assigned port is written to <work-dir>/.port at startup
 # (see PortPublisher) so the frontend dev server / launcher can find it.
 server:
   port: 0
 
 parser:
-  upload-dir: ${java.io.tmpdir}/step-bbox-parser/uploads
-  work-dir: ${java.io.tmpdir}/step-bbox-parser/work
+  upload-dir: Z:/Project/3Dbox-step/cache/uploads
+  work-dir: Z:/Project/3Dbox-step/cache/work
 
-# Mesh generation (cadquery + trimesh under a dedicated conda env). The python
-# interpreter path points at the env created at Z:\conda_envs\step-mesh; override
-# via MESH_PYTHON_EXE if the env lives elsewhere.
 mesh:
   python-exe: ${MESH_PYTHON_EXE:Z:/conda_envs/step-mesh/python.exe}
   script: ${MESH_SCRIPT:scripts/step_to_mesh.py}
@@ -29,9 +26,6 @@ management:
     web:
       exposure:
         include: health,info,metrics,shutdown
-  # Enable graceful shutdown via POST /actuator/shutdown so the launcher can stop
-  # the app cleanly on Windows (where taskkill can't send a gentle signal to a
-  # console process). This triggers @PreDestroy → .port file is removed.
   endpoint:
     shutdown:
       enabled: true

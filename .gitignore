@@ -62,6 +62,8 @@ temp/
 # ---- Runtime uploaded files (keep dir, ignore contents) ----
 backend/uploads/
 backend/work/
+.cache/
+Z:/Project/3Dbox-step/cache/
 
 # ---- Large sample binaries (keep small ones, ignore huge) ----
 samples/step/*.stp.gz
