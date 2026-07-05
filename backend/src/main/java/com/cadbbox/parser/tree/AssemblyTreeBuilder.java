@@ -69,6 +69,11 @@ public class AssemblyTreeBuilder {
         List<Nauo> edges = new ArrayList<>();
         Set<Integer> childPds = new HashSet<>();
         Set<Integer> parentPds = new HashSet<>();
+        // Index: NAUO id → ITEM_DEFINED_TRANSFORMATION id, for Creo files that
+        // carry per-instance placement in a separate PDS (the PDS's .definition
+        // is the NAUO and one of its refs is an IDT). Built once here so
+        // resolvePlacement can fall back to it when the NAUO has no inline ref.
+        Map<Integer, Integer> nauoToIdt = indexNauoToIdt(ents);
         for (StepEntity e : ents.values()) {
             if (e.type().equals("NEXT_ASSEMBLY_USAGE_OCCURRENCE")) {
                 List<StepEntity.Ref> refs = new ArrayList<>();
@@ -79,7 +84,8 @@ public class AssemblyTreeBuilder {
                 int parent = refs.get(0).id();   // Creo order: parent assembly
                 int child = refs.get(1).id();     // child component
                 Integer placement = refs.size() >= 3 ? refs.get(2).id() : null;
-                edges.add(new Nauo(parent, child, placement));
+                Integer idt = nauoToIdt.get(e.id());
+                edges.add(new Nauo(parent, child, placement, idt));
                 parentPds.add(parent);
                 childPds.add(child);
             }
@@ -158,7 +164,7 @@ public class AssemblyTreeBuilder {
         if (!seen.add(dedupKey)) return node; // cycle guard
 
         for (Nauo childEdge : childEdges) {
-            Transform4 childLocal = resolvePlacement(childEdge.placement, ents);
+            Transform4 childLocal = resolvePlacement(childEdge.placement, childEdge.idt, ents);
             String childInstanceName = placementName(childEdge.placement, ents);
             Transform4 childRoot = parentRoot.compose(childLocal);
             AssemblyNode child = buildSubtree(childEdge.childPd, childRoot, childInstanceName, edges, pdToProduct, ents, seen);
@@ -170,11 +176,36 @@ public class AssemblyTreeBuilder {
         return node;
     }
 
-    /** Resolve an {@code AXIS2_PLACEMENT_3D} id → Transform4. */
-    private Transform4 resolvePlacement(Integer placementId, Map<Integer, StepEntity> ents) {
-        if (placementId == null) return Transform4.IDENTITY;
+    /**
+     * Resolve an instance's placement to a Transform4. Two sources, in order:
+     * (1) the NAUO's inline {@code AXIS2_PLACEMENT_3D} ref (when present), or
+     * (2) an {@code ITEM_DEFINED_TRANSFORMATION} reachable via the per-instance
+     * PDS (Creo's pattern). Falls back to IDENTITY when neither is available.
+     */
+    private Transform4 resolvePlacement(Integer placementId, Integer idtId, Map<Integer, StepEntity> ents) {
+        Transform4 inline = placementFromAxis2(placementId, ents);
+        if (inline != null) return inline;
+        if (idtId != null) {
+            StepEntity idt = ents.get(idtId);
+            if (idt != null) {
+                // IDT(#assembly_origin_placement, #instance_placement); the 2nd
+                // placement is the instance's position relative to the assembly.
+                StepEntity.Ref lastRef = null;
+                for (Object a : idt.args()) if (a instanceof StepEntity.Ref r) lastRef = r;
+                if (lastRef != null) {
+                    Transform4 t = placementFromAxis2(lastRef.id(), ents);
+                    if (t != null) return t;
+                }
+            }
+        }
+        return Transform4.IDENTITY;
+    }
+
+    /** Resolve an {@code AXIS2_PLACEMENT_3D} id → Transform4, or null if absent/invalid. */
+    private static Transform4 placementFromAxis2(Integer placementId, Map<Integer, StepEntity> ents) {
+        if (placementId == null) return null;
         StepEntity ax = ents.get(placementId);
-        if (ax == null || !ax.type().equals("AXIS2_PLACEMENT_3D")) return Transform4.IDENTITY;
+        if (ax == null || !ax.type().equals("AXIS2_PLACEMENT_3D")) return null;
         // args = (name, #location(CARTESIAN_POINT), #axis(DIRECTION), #refDirection(DIRECTION))
         StepEntity.Ref locRef = ax.refAt(1);
         StepEntity.Ref axisRef = ax.refAt(2);
@@ -185,7 +216,7 @@ public class AssemblyTreeBuilder {
         return Transform4.fromAxis2Placement(origin, axis, refDir);
     }
 
-    private double[] point(StepEntity.Ref ref, Map<Integer, StepEntity> ents) {
+    private static double[] point(StepEntity.Ref ref, Map<Integer, StepEntity> ents) {
         if (ref == null) return new double[]{0, 0, 0};
         StepEntity cp = ents.get(ref.id());
         if (cp == null) return new double[]{0, 0, 0};
@@ -193,7 +224,7 @@ public class AssemblyTreeBuilder {
         return xyz != null ? xyz : new double[]{0, 0, 0};
     }
 
-    private double[] direction(StepEntity.Ref ref, Map<Integer, StepEntity> ents, double[] fallback) {
+    private static double[] direction(StepEntity.Ref ref, Map<Integer, StepEntity> ents, double[] fallback) {
         if (ref == null) return fallback;
         StepEntity dir = ents.get(ref.id());
         if (dir == null) return fallback;
@@ -247,5 +278,34 @@ public class AssemblyTreeBuilder {
         return (id != null && !id.isEmpty()) ? id : "part";
     }
 
-    private record Nauo(int parentPd, int childPd, Integer placement) {}
+    private record Nauo(int parentPd, int childPd, Integer placement, Integer idt) {}
+
+    /** Build NAUO id → ITEM_DEFINED_TRANSFORMATION id, via the per-instance PDS. */
+    private static Map<Integer, Integer> indexNauoToIdt(Map<Integer, StepEntity> ents) {
+        Map<Integer, Integer> out = new HashMap<>();
+        for (StepEntity e : ents.values()) {
+            if (!e.type().equals("PRODUCT_DEFINITION_SHAPE")) continue;
+            StepEntity.Ref defRef = null;
+            StepEntity.Ref idtRef = null;
+            for (Object a : e.args()) {
+                if (a instanceof StepEntity.Ref r) {
+                    StepEntity target = ents.get(r.id());
+                    if (target != null && target.type().equals("ITEM_DEFINED_TRANSFORMATION")) {
+                        idtRef = r;
+                    } else if (defRef == null) {
+                        defRef = r;
+                    } else {
+                        defRef = r;  // last ref wins as the definition
+                    }
+                }
+            }
+            if (idtRef != null && defRef != null) {
+                StepEntity def = ents.get(defRef.id());
+                if (def != null && def.type().equals("NEXT_ASSEMBLY_USAGE_OCCURRENCE")) {
+                    out.put(defRef.id(), idtRef.id());
+                }
+            }
+        }
+        return out;
+    }
 }
