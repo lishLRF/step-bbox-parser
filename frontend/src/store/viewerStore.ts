@@ -3,6 +3,7 @@ import type { ModelMetadata, TreeNode } from '../types/model';
 import { api } from '../services/api';
 
 export type DisplayMode = 'all' | 'subtree' | 'leaf';
+export type BBoxStyle = 'solid' | 'wireframe';
 
 interface ViewerState {
   metadata: ModelMetadata | null;
@@ -17,6 +18,7 @@ interface ViewerState {
   multiSelected: Set<string>;
   search: string;
   displayMode: DisplayMode;
+  bboxStyle: BBoxStyle;
   expanded: Set<string>;
 
   upload: (file: File) => Promise<void>;
@@ -26,6 +28,7 @@ interface ViewerState {
   rangeSelect: (id: string) => void;
   setSearch: (s: string) => void;
   setDisplayMode: (m: DisplayMode) => void;
+  setBboxStyle: (s: BBoxStyle) => void;
   toggleExpand: (id: string) => void;
   renameNode: (id: string, newName: string) => Promise<void>;
   mergeSelected: () => Promise<void>;
@@ -45,6 +48,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   multiSelected: new Set<string>(),
   search: '',
   displayMode: 'all',
+  bboxStyle: 'solid',
   expanded: new Set<string>(),
 
   upload: async (file: File) => {
@@ -87,6 +91,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   }),
   setSearch: (s) => set({ search: s }),
   setDisplayMode: (m) => set({ displayMode: m }),
+  setBboxStyle: (bs) => set({ bboxStyle: bs }),
   toggleExpand: (id) => set((s) => {
     const next = new Set(s.expanded);
     if (next.has(id)) next.delete(id); else next.add(id);
