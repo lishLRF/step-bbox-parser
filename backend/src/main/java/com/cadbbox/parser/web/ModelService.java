@@ -124,18 +124,12 @@ public class ModelService {
         AssemblyNode root = m.roots().get(0);
         AnnotationStore.Annotations ann;
         try { ann = annotations.load(id); } catch (IOException e) { ann = new AnnotationStore.Annotations(); }
-        // Build a list of OCCT per-part bboxes (both solids and shells, since
-        // Creo exports many parts as open shells). Each entry is [mnX,mnY,mnZ,mxX,mxY,mxZ].
-        java.util.List<double[]> occtParts = new java.util.ArrayList<>();
-        if (m.occtBboxes() != null) {
-            for (var entry : m.occtBboxes().entrySet()) {
-                String key = entry.getKey();
-                if (key.startsWith("_solid_") || key.startsWith("_shell_")) {
-                    occtParts.add(entry.getValue());
-                }
-            }
+        // OCCT overall bbox (authoritative for the whole model).
+        double[] overall = null;
+        if (m.occtBboxes() != null && m.occtBboxes().containsKey("__overall__")) {
+            overall = m.occtBboxes().get("__overall__");
         }
-        return toTreeNode(root, m, true, ann, occtParts, new int[]{0});
+        return toTreeNode(root, m, true, ann, overall, new int[]{0});
     }
 
     /** Flat list of every leaf part's bbox (Slice 7 export). */
@@ -366,35 +360,29 @@ public class ModelService {
 
     private TreeNode toTreeNode(AssemblyNode node, ParsedModel model, boolean isRoot,
                                 AnnotationStore.Annotations ann,
-                                java.util.List<double[]> occtParts, int[] occtIdx) {
+                                double[] occtOverall, int[] occtIdx) {
         NodeType type = node.isAssembly()
                 ? (isRoot ? NodeType.ASSEMBLY : NodeType.SUBASSEMBLY)
                 : NodeType.PART;
         BoundingBoxDto bboxDto = null;
-        if (isRoot && model.occtBboxes() != null && model.occtBboxes().containsKey("__overall__")) {
-            // Use OCCT's authoritative overall bbox for the root.
-            double[] b = model.occtBboxes().get("__overall__");
-            bboxDto = makeDto(b[0], b[1], b[2], b[3], b[4], b[5]);
+        if (isRoot && occtOverall != null) {
+            // Root: authoritative overall bbox from OCCT.
+            bboxDto = makeDto(occtOverall[0], occtOverall[1], occtOverall[2],
+                              occtOverall[3], occtOverall[4], occtOverall[5]);
         } else if (!node.isAssembly()) {
-            // Leaf: try OCCT per-solid bbox first (assigned in order), then text-parsed.
-            BoundingBox b = null;
-            if (occtIdx[0] < occtParts.size()) {
-                double[] ob = occtParts.get(occtIdx[0]);
-                occtIdx[0]++;
-                b = new BoundingBox(ob[0], ob[1], ob[2], ob[3], ob[4], ob[5]);
-            } else {
-                b = model.productBboxes().get(node.productId());
-                if (b != null) {
-                    b = transformAabb(b, node.rootTransform());
-                }
-            }
-            if (b != null) {
+            // Leaf part: use the text-parser per-product AABB, transformed by
+            // the instance's placement. This is geometrically correct per-part
+            // (unlike OCCT's un-ordered per-solid list which can't be mapped
+            // to tree nodes reliably).
+            BoundingBox local = model.productBboxes().get(node.productId());
+            if (local != null) {
+                BoundingBox b = transformAabb(local, node.rootTransform());
                 bboxDto = makeDto(b.minX(), b.minY(), b.minZ(), b.maxX(), b.maxY(), b.maxZ());
             }
         }
         List<TreeNode> children = new ArrayList<>();
         for (AssemblyNode c : node.children()) {
-            children.add(toTreeNode(c, model, false, ann, occtParts, occtIdx));
+            children.add(toTreeNode(c, model, false, ann, occtOverall, occtIdx));
         }
         String nodeId = nodeId(node, isRoot);
         // Apply persisted rename if any.

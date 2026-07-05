@@ -152,17 +152,11 @@ def _collect_vertices(shape, triangulate) -> list:
 
     verts = []
     explorer = TopExp_Explorer(shape, TopAbs_FACE)
-    seen_triangulations = set()
     while explorer.More():
         face = TopoDS.Face(explorer.Current())
         loc = TopLoc_Location()
         tri = triangulate(face, loc)
         if tri is not None and tri.NbNodes() > 0:
-            tri_id = id(tri)
-            if tri_id in seen_triangulations:
-                explorer.Next()
-                continue
-            seen_triangulations.add(tri_id)
             trsf = loc.Transformation()
             n = tri.NbNodes()
             for i in range(1, n + 1):
