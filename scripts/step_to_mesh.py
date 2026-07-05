@@ -1,80 +1,94 @@
 """
-STEP → glTF/GLB mesh converter. Spawned by the Java backend (ModelService) as:
+STEP → glTF/GLB mesh converter. Spawned by the Java backend (MeshService) as:
     python step_to_mesh.py <input.stp> <output.glb> [--linear-deflection 0.1] [--angular-deflection 0.3]
 
-Uses cadquery (OCCT) to tessellate every solid in the STEP file, then assembles
-the triangles into a single trimesh.Trimesh and exports as binary glTF (.glb).
+Uses OCP (the OCCT Python bindings, shipped with cadquery/cadquery-ocp) to load
+the STEP file, run BRepMesh_IncrementalMesh on every solid & shell, harvest the
+triangulations into a single trimesh.Trimesh, and export as binary glTF (.glb).
 
-The output is a single-mesh GLB with vertex normals; per-part coloring is left
-to the frontend (which already knows the assembly tree + bboxes). Keeping the
-mesh flat (no per-part grouping in the GLB) avoids a heavy multi-node glTF and
-lets the frontend apply its existing selection/colored-overlay logic.
-
-Linear/angular deflection control the tessellation density. Defaults are tuned
-for mechanical parts: ~0.1mm linear (in the file's units) gives smooth curves
-without exploding triangle counts. For very large assemblies pass larger values.
+This is robust to both solids (closed volumes) and open shells (surfaces),
+which matters because some Creo exports include MANIFOLD_SURFACE_SHAPE
+representations that aren't closed solids — cadquery's high-level
+.tessellate() only handles solids, so we go one layer down to OCCT.
 """
 import sys
 import argparse
-import trimesh
 import numpy as np
 
 
-def tessellate_step(step_path: str, linear_deflection: float, angular_deflection: float) -> trimesh.Trimesh:
-    """Tessellate every solid in the STEP file and merge into one Trimesh."""
-    import cadquery as cq
+def tessellate_step(step_path: str, linear_deflection: float, angular_deflection: float) -> "trimesh.Trimesh":
+    from OCP.STEPControl import STEPControl_Reader
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.BRep import BRep_Tool
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.Poly import Poly_Triangulation
+    import trimesh
 
-    # cadquery.Importers.importStep returns a Workplane whose .val() is a Shape
-    # (compound of solids). We tessellate each solid separately and concatenate.
-    wp = cq.importers.importStep(step_path)
-    shape = wp.val()
+    # 1. Load the STEP file.
+    reader = STEPControl_Reader()
+    status = reader.ReadFile(step_path.encode("utf-8") if isinstance(step_path, str) else step_path)
+    if not status:
+        raise RuntimeError(f"OCP could not read STEP file: {step_path}")
+    reader.TransferRoots()
+    shape = reader.OneShape()
+    if shape is None:
+        raise RuntimeError("STEP reader returned no shape")
 
-    # BRep -> triangulation via OCCT's BRepMesh. cadquery exposes this through
-    # the .tessellate() method on Shape, returning (vertices, faces) per call.
-    # For an assembly we want every solid; iterate the compounds down.
+    # 2. Tessellate the whole shape (handles solids, shells, and free faces).
+    mesh = BRepMesh_IncrementalMesh(shape, linear_deflection, False, angular_deflection)
+    mesh.Perform()
+
+    # 3. Walk every face and harvest its triangulation.
     vertices = []
     faces = []
-    idx_offset = 0
+    base = 0
 
-    solids = shape.Solids() if hasattr(shape, "Solids") else [shape]
-    if not solids:
-        solids = [shape]
+    from OCP.TopoDS import TopoDS
 
-    for solid in solids:
-        # tessellate returns (vertex_list, face_indices_into_vertex_list)
-        try:
-            verts, face_idx = solid.tessellate(linear_deflection, angular_deflection)
-        except Exception:
-            # Fallback: try the Workplane-level tessellation
-            continue
-        if not verts or not face_idx:
-            continue
-        for v in verts:
-            vertices.append([v.x, v.y, v.z])
-        for f in face_idx:
-            # f is a cq.Face or a tuple of indices depending on cadquery version;
-            # normalize to a triangle index triple
-            if hasattr(f, "__iter__"):
-                idx = list(f)
-            else:
-                continue
-            # Triangulate polygons > 3 vertices (fan)
-            if len(idx) == 3:
-                faces.append([i + idx_offset for i in idx])
-            elif len(idx) > 3:
-                for k in range(1, len(idx) - 1):
-                    faces.append([idx[0] + idx_offset, idx[k] + idx_offset, idx[k + 1] + idx_offset])
-        idx_offset += len(verts)
+    explorer = TopExp_Explorer(shape, TopAbs_FACE)
+    # BRep_Tool.Triangulation is exposed as a static method whose exact name
+    # varies across OCP versions (Triangulation vs Triangulation_s).
+    triangulate = getattr(BRep_Tool, "Triangulation", None) or getattr(BRep_Tool, "Triangulation_s")
+    while explorer.More():
+        # explorer.Current() returns a TopoDS_Shape; cast to TopoDS_Face.
+        face = TopoDS.Face(explorer.Current())
+        loc = TopLoc_Location()
+        tri = triangulate(face, loc)
+        if tri is not None and tri.NbNodes() > 0 and tri.NbTriangles() > 0:
+            trsf = loc.Transformation()
+            n_nodes = tri.NbNodes()
+            n_tris = tri.NbTriangles()
+            # Read nodes (transformed to absolute coordinates).
+            for i in range(1, n_nodes + 1):
+                pnt = tri.Node(i)
+                pnt.Transform(trsf)
+                vertices.append([pnt.X(), pnt.Y(), pnt.Z()])
+            # Read triangles (1-based indices into the node array).
+            for i in range(1, n_tris + 1):
+                a, b, c = tri.Triangle(i).Get()  # returns (a, b, c)
+                faces.append([a - 1 + base, b - 1 + base, c - 1 + base])
+            base += n_nodes
+        explorer.Next()
 
     if not vertices or not faces:
-        raise RuntimeError("Tessellation produced no geometry")
+        raise RuntimeError("Tessellation produced no geometry (no triangulated faces found)")
 
-    mesh = trimesh.Trimesh(vertices=np.array(vertices, dtype=np.float64),
-                           faces=np.array(faces, dtype=np.int64), process=False)
-    mesh.merge_vertices()
-    # Recompute normals so the GLB renders with proper lighting.
-    mesh.fix_normals()
-    return mesh
+    out = trimesh.Trimesh(
+        vertices=np.array(vertices, dtype=np.float64),
+        faces=np.array(faces, dtype=np.int64),
+        process=False,
+    )
+    # merge_vertices / fix_normals need networkx; they're nice-to-have for
+    # watertight cleanup but not required for GLB export. Skip if unavailable.
+    try:
+        out.merge_vertices()
+        out.fix_normals()
+    except ModuleNotFoundError:
+        # networkx missing — compute simple vertex normals from face geometry.
+        out._cache.clear()
+    return out
 
 
 def main():
@@ -86,7 +100,6 @@ def main():
     args = p.parse_args()
 
     mesh = tessellate_step(args.input, args.linear_deflection, args.angular_deflection)
-    # Export as binary glTF (single-mesh GLB). trimesh handles the packaging.
     mesh.export(args.output, file_type="glb")
     print(f"OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces -> {args.output}")
 
