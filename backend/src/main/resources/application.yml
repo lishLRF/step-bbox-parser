@@ -22,6 +22,7 @@ parser:
 mesh:
   python-exe: ${MESH_PYTHON_EXE:Z:/conda_envs/step-mesh/python.exe}
   script: ${MESH_SCRIPT:scripts/step_to_mesh.py}
+  bbox-script: ${MESH_BBOX_SCRIPT:scripts/step_to_bbox.py}
 
 management:
   endpoints:

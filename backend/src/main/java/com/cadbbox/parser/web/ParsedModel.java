@@ -9,10 +9,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * In-memory cached result of parsing one uploaded model: the parsed STEP file
- * (for downstream queries), the built assembly forest, the per-product
- * local-frame AABB index (built once at upload, reused for every tree query),
- * and the on-disk path to the saved STEP file (used by the mesh generator).
+ * In-memory cached result of parsing one uploaded model.
+ *
+ * @param productBboxes   per-product AABB from text parsing (fallback)
+ * @param occtBboxes      per-part AABB from OCCT (authoritative, may be null if
+ *                        the Python converter hasn't run yet). Keyed by
+ *                        "_solid_N" / "_shell_N" / "__overall__".
  */
 public record ParsedModel(
         String id,
@@ -20,5 +22,6 @@ public record ParsedModel(
         StepParser.ParsedStepFile parsed,
         List<AssemblyNode> roots,
         Map<Integer, BoundingBox> productBboxes,
-        Path sourceStep
+        Path sourceStep,
+        Map<String, double[]> occtBboxes
 ) {}

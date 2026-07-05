@@ -47,12 +47,17 @@ public class ModelService {
     private final BboxIndexer bboxIndexer;
     private final AnnotationStore annotations;
     private final Path uploadDir;
+    private final String pythonExe;
+    private final Path bboxScript;
+    private final Path bboxCacheDir;
     private final Map<String, ParsedModel> store = new ConcurrentHashMap<>();
 
     public ModelService(StepParser parser, AssemblyTreeBuilder treeBuilder,
                         BoundingBoxCalculator bboxCalc, BboxIndexer bboxIndexer,
                         AnnotationStore annotations,
-                        @org.springframework.beans.factory.annotation.Value("${parser.upload-dir:#{T(java.lang.System).getProperty('java.io.tmpdir')} }") String uploadDir)
+                        @org.springframework.beans.factory.annotation.Value("${parser.upload-dir:#{T(java.lang.System).getProperty('java.io.tmpdir')} }") String uploadDir,
+                        @org.springframework.beans.factory.annotation.Value("${mesh.python-exe:python}") String pythonExe,
+                        @org.springframework.beans.factory.annotation.Value("${mesh.bbox-script:scripts/step_to_bbox.py}") String bboxScript)
             throws IOException {
         this.parser = parser;
         this.treeBuilder = treeBuilder;
@@ -60,7 +65,21 @@ public class ModelService {
         this.bboxIndexer = bboxIndexer;
         this.annotations = annotations;
         this.uploadDir = Paths.get(uploadDir);
+        this.pythonExe = pythonExe;
+        // Resolve script path same way as MeshService.
+        Path sp = Paths.get(bboxScript);
+        if (!Files.exists(sp)) {
+            String jarLoc = System.getProperty("user.dir");
+            Path projRoot = Paths.get(jarLoc).getParent();
+            if (projRoot != null && Files.exists(projRoot.resolve(bboxScript)))
+                sp = projRoot.resolve(bboxScript).toAbsolutePath();
+            else if (Files.exists(Paths.get(jarLoc).resolve(bboxScript)))
+                sp = Paths.get(jarLoc).resolve(bboxScript).toAbsolutePath();
+        }
+        this.bboxScript = sp;
+        this.bboxCacheDir = Paths.get(uploadDir, "step-bbox-bboxes");
         Files.createDirectories(this.uploadDir);
+        Files.createDirectories(this.bboxCacheDir);
     }
 
     public ModelMetadata upload(MultipartFile file) throws IOException {
@@ -86,7 +105,10 @@ public class ModelService {
         // Persist the uploaded STEP so the mesh generator can read it later.
         Path saved = uploadDir.resolve(id + ".stp");
         file.transferTo(saved.toFile());
-        store.put(id, new ParsedModel(id, file.getOriginalFilename(), parsed, roots, productBboxes, saved));
+        // Run OCCT-based bbox computation for authoritative geometry bounds.
+        // This produces per-part AABBs in mm; we convert to the file's unit.
+        Map<String, double[]> occtBboxes = computeOcctBboxes(saved, id);
+        store.put(id, new ParsedModel(id, file.getOriginalFilename(), parsed, roots, productBboxes, saved, occtBboxes));
         return metadata(id, parsed, file.getOriginalFilename(), roots);
     }
 
@@ -99,7 +121,18 @@ public class ModelService {
         AssemblyNode root = m.roots().get(0);
         AnnotationStore.Annotations ann;
         try { ann = annotations.load(id); } catch (IOException e) { ann = new AnnotationStore.Annotations(); }
-        return toTreeNode(root, m, true, ann);
+        // Build a list of OCCT per-solid bboxes (skip shells to avoid duplicates;
+        // each solid already includes its shell). Sort by size descending so
+        // larger parts (more visually significant) get matched first.
+        java.util.List<double[]> occtParts = new java.util.ArrayList<>();
+        if (m.occtBboxes() != null) {
+            for (var entry : m.occtBboxes().entrySet()) {
+                if (entry.getKey().startsWith("_solid_")) {
+                    occtParts.add(entry.getValue());
+                }
+            }
+        }
+        return toTreeNode(root, m, true, ann, occtParts, new int[]{0});
     }
 
     /** Flat list of every leaf part's bbox (Slice 7 export). */
@@ -161,6 +194,15 @@ public class ModelService {
         for (TreeNode c : n.children()) walkForBoxes(c, members, acc);
     }
 
+    private static BoundingBoxDto makeDto(double mnX, double mnY, double mnZ,
+                                           double mxX, double mxY, double mxZ) {
+        return new BoundingBoxDto(
+                new Vec3(mnX, mnY, mnZ),
+                new Vec3(mxX, mxY, mxZ),
+                new Vec3((mnX + mxX) / 2, (mnY + mxY) / 2, (mnZ + mxZ) / 2),
+                new Vec3(mxX - mnX, mxY - mnY, mxZ - mnZ));
+    }
+
     /** Lift a local-frame AABB into another frame by transforming its 8 corners. */
     private static BoundingBox transformAabb(BoundingBox local, Transform4 t) {
         double mnX = Double.POSITIVE_INFINITY, mnY = Double.POSITIVE_INFINITY, mnZ = Double.POSITIVE_INFINITY;
@@ -193,27 +235,36 @@ public class ModelService {
     // ---- internal ----
 
     private TreeNode toTreeNode(AssemblyNode node, ParsedModel model, boolean isRoot,
-                                AnnotationStore.Annotations ann) {
+                                AnnotationStore.Annotations ann,
+                                java.util.List<double[]> occtParts, int[] occtIdx) {
         NodeType type = node.isAssembly()
                 ? (isRoot ? NodeType.ASSEMBLY : NodeType.SUBASSEMBLY)
                 : NodeType.PART;
         BoundingBoxDto bboxDto = null;
-        if (!node.isAssembly()) {
-            // O(1) lookup against the pre-built index, then lift the local AABB's
-            // 8 corners into root coordinates via the instance transform chain.
-            BoundingBox local = model.productBboxes().get(node.productId());
-            if (local != null) {
-                BoundingBox b = transformAabb(local, node.rootTransform());
-                bboxDto = new BoundingBoxDto(
-                        new Vec3(b.minX(), b.minY(), b.minZ()),
-                        new Vec3(b.maxX(), b.maxY(), b.maxZ()),
-                        new Vec3(b.centerX(), b.centerY(), b.centerZ()),
-                        new Vec3(b.sizeX(), b.sizeY(), b.sizeZ()));
+        if (isRoot && model.occtBboxes() != null && model.occtBboxes().containsKey("__overall__")) {
+            // Use OCCT's authoritative overall bbox for the root.
+            double[] b = model.occtBboxes().get("__overall__");
+            bboxDto = makeDto(b[0], b[1], b[2], b[3], b[4], b[5]);
+        } else if (!node.isAssembly()) {
+            // Leaf: try OCCT per-solid bbox first (assigned in order), then text-parsed.
+            BoundingBox b = null;
+            if (occtIdx[0] < occtParts.size()) {
+                double[] ob = occtParts.get(occtIdx[0]);
+                occtIdx[0]++;
+                b = new BoundingBox(ob[0], ob[1], ob[2], ob[3], ob[4], ob[5]);
+            } else {
+                b = model.productBboxes().get(node.productId());
+                if (b != null) {
+                    b = transformAabb(b, node.rootTransform());
+                }
+            }
+            if (b != null) {
+                bboxDto = makeDto(b.minX(), b.minY(), b.minZ(), b.maxX(), b.maxY(), b.maxZ());
             }
         }
         List<TreeNode> children = new ArrayList<>();
         for (AssemblyNode c : node.children()) {
-            children.add(toTreeNode(c, model, false, ann));
+            children.add(toTreeNode(c, model, false, ann, occtParts, occtIdx));
         }
         String nodeId = nodeId(node, isRoot);
         // Apply persisted rename if any.
@@ -273,6 +324,63 @@ public class ModelService {
         ParsedModel m = store.get(id);
         if (m == null) throw new ModelNotFoundException(id);
         return m;
+    }
+
+    /** Run the OCCT-based bbox script, parse the JSON result. Returns empty map on failure. */
+    private Map<String, double[]> computeOcctBboxes(Path stepFile, String modelId) {
+        Path jsonOut = bboxCacheDir.resolve(modelId + "_bbox.json");
+        if (Files.exists(jsonOut) && jsonOut.toFile().length() > 0) {
+            return parseBboxJson(jsonOut);
+        }
+        try {
+            ProcessBuilder pb = new ProcessBuilder(pythonExe,
+                    bboxScript.toAbsolutePath().toString(),
+                    stepFile.toAbsolutePath().toString(),
+                    jsonOut.toAbsolutePath().toString());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            StringBuilder log = new StringBuilder();
+            try (var r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
+                String line;
+                while ((line = r.readLine()) != null) log.append(line).append('\n');
+            }
+            boolean done = p.waitFor(30, java.util.concurrent.TimeUnit.MINUTES);
+            if (!done || p.exitValue() != 0) {
+                System.err.println("[bbox] OCCT converter failed: " + log);
+                return Map.of();
+            }
+            return parseBboxJson(jsonOut);
+        } catch (Exception e) {
+            System.err.println("[bbox] OCCT converter error: " + e.getMessage());
+            return Map.of();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, double[]> parseBboxJson(Path jsonFile) {
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            var root = mapper.readTree(jsonFile.toFile());
+            Map<String, double[]> result = new java.util.HashMap<>();
+            root.fields().forEachRemaining(entry -> {
+                var node = entry.getValue();
+                if (node.has("min") && node.has("max")) {
+                    double[] mn = new double[3], mx = new double[3];
+                    for (int i = 0; i < 3; i++) {
+                        mn[i] = node.get("min").get(i).asDouble();
+                        mx[i] = node.get("max").get(i).asDouble();
+                    }
+                    // OCCT outputs in mm; our tree uses the file's native unit.
+                    // GMC2550WRS STEP coords are in mm already, and our text parser
+                    // reads them as-is (no unit conversion). So pass through directly.
+                    result.put(entry.getKey(), new double[]{mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]});
+                }
+            });
+            return result;
+        } catch (Exception e) {
+            System.err.println("[bbox] JSON parse error: " + e.getMessage());
+            return Map.of();
+        }
     }
 
     private void validate(MultipartFile file) {
