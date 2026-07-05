@@ -87,6 +87,22 @@ h2:first-child { margin-top: 0; }
 }
 .metadata strong { color: var(--fg); }
 
+/* cached models */
+.cached-models { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.cached-models__header {
+  font-size: 11px; color: var(--fg-dim); text-transform: uppercase; margin-bottom: 8px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.cached-models__item {
+  padding: 6px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 4px;
+  background: var(--panel-2); border: 1px solid var(--border);
+}
+.cached-models__item:hover { border-color: var(--accent); }
+.cached-models__name { font-size: 12px; }
+.cached-models__mesh { color: var(--accent); margin-left: 6px; font-size: 10px; }
+.cached-models__meta { font-size: 10px; color: var(--fg-dim); margin-top: 2px; }
+.btn--sm { font-size: 10px; padding: 2px 6px; }
+
 /* toolbar */
 .toolbar { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 .toolbar__label { font-size: 11px; color: var(--fg-dim); margin: 8px 0 4px; text-transform: uppercase; }

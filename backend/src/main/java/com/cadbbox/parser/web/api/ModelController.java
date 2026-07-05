@@ -53,6 +53,18 @@ public class ModelController {
         return ResponseEntity.ok(meta);
     }
 
+    // ---- List cached models (previously parsed) ----
+    @GetMapping("/cached")
+    public List<Map<String, Object>> listCached() {
+        return service.listCachedModels();
+    }
+
+    // ---- Load a cached model (skip re-parse) ----
+    @PostMapping("/cached/{id}/load")
+    public ModelMetadata loadCached(@PathVariable String id) {
+        return service.loadCached(id);
+    }
+
     @GetMapping("/{id}/tree")
     public TreeNode tree(@PathVariable String id) {
         return service.tree(id);

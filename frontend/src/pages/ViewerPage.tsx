@@ -3,6 +3,7 @@ import { ModelViewer } from '../components/ModelViewer';
 import { BBoxViewer } from '../components/BBoxViewer';
 import { TreeView } from '../components/TreeView';
 import { NodeInspector } from '../components/NodeInspector';
+import { CachedModels } from '../components/CachedModels';
 import { useViewerStore, type DisplayMode, type BBoxStyle } from '../store/viewerStore';
 
 /**
@@ -22,6 +23,7 @@ export function ViewerPage() {
       <aside className="panel panel--left">
         <h2>上传模型</h2>
         <ModelUploader />
+        <CachedModels />
         {metadata && (
           <div className="metadata">
             <div><strong>{metadata.fileName}</strong></div>

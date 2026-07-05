@@ -23,6 +23,7 @@ interface ViewerState {
   expanded: Set<string>;
 
   upload: (file: File) => Promise<void>;
+  loadCachedModel: (modelId: string) => Promise<void>;
   loadTree: (modelId: string) => Promise<void>;
   watchBboxProgress: (modelId: string) => void;
   select: (id: string | null) => void;
@@ -61,6 +62,19 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       set({ metadata: meta, uploading: false });
       // Watch bbox progress via SSE.
       get().watchBboxProgress(meta.id);
+      await get().loadTree(meta.id);
+    } catch (e: any) {
+      set({ uploading: false, error: e?.response?.data?.detail ?? String(e) });
+    }
+  },
+
+  loadCachedModel: async (modelId: string) => {
+    set({ uploading: true, uploadProgress: 100, bboxProgress: null, error: null, tree: null, metadata: null });
+    try {
+      const { default: axios } = await import('axios');
+      const resp = await axios.post(`/api/models/cached/${modelId}/load`);
+      const meta = resp.data;
+      set({ metadata: meta, uploading: false });
       await get().loadTree(meta.id);
     } catch (e: any) {
       set({ uploading: false, error: e?.response?.data?.detail ?? String(e) });

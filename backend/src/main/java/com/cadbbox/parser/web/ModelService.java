@@ -226,6 +226,71 @@ public class ModelService {
         return metadata(id, m.parsed(), m.fileName(), m.roots());
     }
 
+    /** List all cached models (previously uploaded + parsed). Returns metadata
+     *  for each so the frontend can show a "load" button without re-parsing. */
+    public List<Map<String, Object>> listCachedModels() {
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        File[] stpFiles = uploadDir.toFile().listFiles((d, name) -> name.endsWith(".stp"));
+        if (stpFiles == null) return result;
+        for (File stp : stpFiles) {
+            String id = stp.getName().replace(".stp", "");
+            Path bboxJson = bboxCacheDir.resolve(id + "_bbox.json");
+            Path glbFile = Paths.get(uploadDir.toString(), "..", "step-bbox-meshes").normalize().resolve(id + ".glb");
+            boolean hasBbox = Files.exists(bboxJson);
+            boolean hasGlb = Files.exists(glbFile);
+            if (!hasBbox) continue; // not fully parsed yet
+            Map<String, Object> entry = new java.util.LinkedHashMap<>();
+            entry.put("id", id);
+            entry.put("stpSize", stp.length());
+            entry.put("parsedAt", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm")
+                    .format(new java.util.Date(stp.lastModified())));
+            entry.put("hasMesh", hasGlb);
+            // Try to get part count from bbox JSON.
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                var root = mapper.readTree(bboxJson.toFile());
+                int solids = 0, shells = 0;
+                var fields = root.fields();
+                while (fields.hasNext()) {
+                    var f = fields.next();
+                    if (f.getKey().startsWith("_solid_")) solids++;
+                    else if (f.getKey().startsWith("_shell_")) shells++;
+                }
+                entry.put("parts", solids + shells);
+            } catch (Exception e) {
+                entry.put("parts", 0);
+            }
+            result.add(entry);
+        }
+        // Sort newest first.
+        result.sort((a, b) -> String.valueOf(b.get("parsedAt")).compareTo(String.valueOf(a.get("parsedAt"))));
+        return result;
+    }
+
+    /** Re-load a cached model into the in-memory store (skip parse + OCCT bbox). */
+    public ModelMetadata loadCached(String id) {
+        Path stpFile = uploadDir.resolve(id + ".stp");
+        if (!Files.exists(stpFile)) throw new ModelNotFoundException(id);
+        // Check if already in memory.
+        if (store.containsKey(id)) {
+            ParsedModel m = store.get(id);
+            return metadata(id, m.parsed(), m.fileName(), m.roots());
+        }
+        // Re-parse the STEP (fast — text parsing only, ~seconds) and rebuild tree.
+        // The OCCT bbox JSON is already on disk, so we just load it.
+        try {
+            StepParser.ParsedStepFile parsed = parser.parse(Files.newInputStream(stpFile));
+            List<AssemblyNode> roots = treeBuilder.build(parsed);
+            Map<Integer, BoundingBox> productBboxes = bboxIndexer.index(parsed);
+            Map<String, double[]> occtBboxes = parseBboxJson(bboxCacheDir.resolve(id + "_bbox.json"));
+            String fileName = "cached-" + id.substring(0, 8);
+            store.put(id, new ParsedModel(id, fileName, parsed, roots, productBboxes, stpFile, occtBboxes));
+            return metadata(id, parsed, fileName, roots);
+        } catch (Exception e) {
+            throw new StepParseException("Failed to load cached model: " + e.getMessage(), e);
+        }
+    }
+
     /** Public accessor for cross-service use (e.g. MeshService needs the source path). */
     public ParsedModel requirePublic(String id) {
         return require(id);
