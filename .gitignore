@@ -46,6 +46,9 @@ Desktop.ini
 ehthumbs.db
 # Windows reserved device name that can't be deleted via shell
 nul
+# Python bytecode caches
+__pycache__/
+*.pyc
 
 # ---- Logs / tmp ----
 *.log
