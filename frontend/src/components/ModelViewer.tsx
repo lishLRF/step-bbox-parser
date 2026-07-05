@@ -53,7 +53,8 @@ export function ModelViewer() {
   const boxes: { id: string; box: BoundingBox }[] = [];
   if (tree) {
     const collect = (n: TreeNode) => {
-      if (n.boundingBox) boxes.push({ id: n.id, box: n.boundingBox });
+      // Only show PART-level wireframes (skip assembly overall bbox).
+      if (n.boundingBox && n.type === 'PART') boxes.push({ id: n.id, box: n.boundingBox });
       for (const c of n.children) collect(c);
     };
     collect(tree);

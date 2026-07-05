@@ -61,21 +61,27 @@ export function BBoxViewer() {
   const palette = makePalette();
   const boxes: { id: string; box: BoundingBox; color: string; isMerge: boolean }[] = [];
   let paletteIdx = 0;
-  const collect = (node: TreeNode, parentKey: string) => {
+  const collect = (node: TreeNode, parentKey: string, depth: number) => {
     const isMerge = node.id.startsWith('merge-');
     let groupKey = parentKey;
-    if (displayMode === 'leaf' && (node.type === 'ASSEMBLY' || node.type === 'SUBASSEMBLY') && !isMerge) {
-    } else if (displayMode === 'subtree' && selectedId && !isInSubtree(node, selectedId)) {
-    } else if (node.boundingBox) {
-      if (!colorByParent.has(groupKey)) {
-        colorByParent.set(groupKey, palette[paletteIdx % palette.length]);
-        paletteIdx++;
+    // Only render PART nodes (leaf parts) and merge groups.
+    // Skip ASSEMBLY/SUBASSEMBLY nodes (they carry the overall bbox which
+    // would draw a giant box around everything — not useful).
+    const shouldRender = node.type === 'PART' || isMerge;
+    if (shouldRender && node.boundingBox) {
+      if (displayMode === 'subtree' && selectedId && !isInSubtree(node, selectedId)) {
+        // skip — outside selected subtree
+      } else {
+        if (!colorByParent.has(groupKey)) {
+          colorByParent.set(groupKey, palette[paletteIdx % palette.length]);
+          paletteIdx++;
+        }
+        boxes.push({ id: node.id, box: node.boundingBox, color: colorByParent.get(groupKey)!, isMerge });
       }
-      boxes.push({ id: node.id, box: node.boundingBox, color: colorByParent.get(groupKey)!, isMerge });
     }
-    for (const c of node.children) collect(c, node.id);
+    for (const c of node.children) collect(c, node.id, depth + 1);
   };
-  collect(tree, '__root__');
+  collect(tree, '__root__', 0);
 
   return (
     <div className="viewer">
