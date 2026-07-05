@@ -138,17 +138,25 @@ function Cuboid({ box, color, solid, dim, highlighted }: {
   const cy = (box.min.y + box.max.y) / 2;
   const cz = (box.min.z + box.max.z) / 2;
   const edgeColor = highlighted ? '#ffffff' : color;
-  const fillOpacity = dim ? 0.03 : highlighted ? 0.55 : solid ? 0.4 : 0.06;
+  // Edge opacity: always visible from any angle.
+  const edgeOpacity = dim ? 0.08 : highlighted ? 1.0 : 0.7;
+  // Fill: low opacity + depthWrite:false so boxes don't occlude each other.
+  // This makes all wireframes visible through any transparent fill.
+  const fillOpacity = dim ? 0.0 : highlighted ? 0.25 : solid ? 0.15 : 0.0;
   return (
     <group position={[cx, cy, cz]}>
+      {/* Edges — always rendered, always visible from any angle */}
       <lineSegments>
         <edgesGeometry args={[new THREE.BoxGeometry(sx, sy, sz)]} />
-        <lineBasicMaterial color={edgeColor} transparent opacity={dim ? 0.1 : 0.95} />
+        <lineBasicMaterial color={edgeColor} transparent opacity={edgeOpacity}
+          depthTest={true} depthWrite={true} />
       </lineSegments>
-      {solid && (
+      {/* Fill — optional, non-occluding */}
+      {fillOpacity > 0.01 && (
         <mesh>
           <boxGeometry args={[sx, sy, sz]} />
-          <meshStandardMaterial color={color} transparent opacity={fillOpacity} roughness={0.6} metalness={0.1} />
+          <meshBasicMaterial color={color} transparent opacity={fillOpacity}
+            depthWrite={false} side={THREE.DoubleSide} />
         </mesh>
       )}
     </group>
