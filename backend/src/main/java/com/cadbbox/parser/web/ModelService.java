@@ -124,12 +124,20 @@ public class ModelService {
         AssemblyNode root = m.roots().get(0);
         AnnotationStore.Annotations ann;
         try { ann = annotations.load(id); } catch (IOException e) { ann = new AnnotationStore.Annotations(); }
-        // OCCT overall bbox (authoritative for the whole model).
-        double[] overall = null;
-        if (m.occtBboxes() != null && m.occtBboxes().containsKey("__overall__")) {
-            overall = m.occtBboxes().get("__overall__");
+        // Build OCCT per-part list (solids + shells) for sequential assignment.
+        java.util.List<double[]> occtParts = new java.util.ArrayList<>();
+        double[] occtOverall = null;
+        if (m.occtBboxes() != null) {
+            for (var entry : m.occtBboxes().entrySet()) {
+                String key = entry.getKey();
+                if (key.startsWith("_solid_") || key.startsWith("_shell_")) {
+                    occtParts.add(entry.getValue());
+                } else if (key.equals("__overall__")) {
+                    occtOverall = entry.getValue();
+                }
+            }
         }
-        return toTreeNode(root, m, true, ann, overall, new int[]{0});
+        return toTreeNode(root, m, true, ann, occtParts, occtOverall, new int[]{0});
     }
 
     /** Flat list of every leaf part's bbox (Slice 7 export). */
@@ -360,29 +368,35 @@ public class ModelService {
 
     private TreeNode toTreeNode(AssemblyNode node, ParsedModel model, boolean isRoot,
                                 AnnotationStore.Annotations ann,
-                                double[] occtOverall, int[] occtIdx) {
+                                java.util.List<double[]> occtParts, double[] occtOverall, int[] occtIdx) {
         NodeType type = node.isAssembly()
                 ? (isRoot ? NodeType.ASSEMBLY : NodeType.SUBASSEMBLY)
                 : NodeType.PART;
         BoundingBoxDto bboxDto = null;
         if (isRoot && occtOverall != null) {
-            // Root: authoritative overall bbox from OCCT.
             bboxDto = makeDto(occtOverall[0], occtOverall[1], occtOverall[2],
                               occtOverall[3], occtOverall[4], occtOverall[5]);
         } else if (!node.isAssembly()) {
-            // Leaf part: use the text-parser per-product AABB, transformed by
-            // the instance's placement. This is geometrically correct per-part
-            // (unlike OCCT's un-ordered per-solid list which can't be mapped
-            // to tree nodes reliably).
-            BoundingBox local = model.productBboxes().get(node.productId());
-            if (local != null) {
-                BoundingBox b = transformAabb(local, node.rootTransform());
-                bboxDto = makeDto(b.minX(), b.minY(), b.minZ(), b.maxX(), b.maxY(), b.maxZ());
+            // Leaf: use OCCT per-solid bbox (authoritative geometry), assigned
+            // in order. This is imperfect (OCCT order ≠ tree leaf order) but
+            // gives correct DIMENSIONS. The alternative (text-parser per-product)
+            // is worse — many products have no reachable geometry points.
+            if (occtIdx[0] < occtParts.size()) {
+                double[] ob = occtParts.get(occtIdx[0]);
+                occtIdx[0]++;
+                bboxDto = makeDto(ob[0], ob[1], ob[2], ob[3], ob[4], ob[5]);
+            } else {
+                // Fallback: text-parser per-product bbox.
+                BoundingBox local = model.productBboxes().get(node.productId());
+                if (local != null) {
+                    BoundingBox b = transformAabb(local, node.rootTransform());
+                    bboxDto = makeDto(b.minX(), b.minY(), b.minZ(), b.maxX(), b.maxY(), b.maxZ());
+                }
             }
         }
         List<TreeNode> children = new ArrayList<>();
         for (AssemblyNode c : node.children()) {
-            children.add(toTreeNode(c, model, false, ann, occtOverall, occtIdx));
+            children.add(toTreeNode(c, model, false, ann, occtParts, occtOverall, occtIdx));
         }
         String nodeId = nodeId(node, isRoot);
         // Apply persisted rename if any.
